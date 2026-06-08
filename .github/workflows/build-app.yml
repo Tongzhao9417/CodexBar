@@ -1,0 +1,53 @@
+name: Build App
+
+on:
+  push:
+    branches:
+      - feature/import-sub2api-json
+  workflow_dispatch:
+
+concurrency:
+  group: build-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-app:
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select Xcode 26.1.1 (if present) or fallback to default
+        run: |
+          set -euo pipefail
+          for candidate in /Applications/Xcode_26.1.1.app /Applications/Xcode_26.1.app /Applications/Xcode.app; do
+            if [[ -d "$candidate" ]]; then
+              sudo xcode-select -s "${candidate}/Contents/Developer"
+              echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
+              break
+            fi
+          done
+          /usr/bin/xcodebuild -version
+
+      - name: Build universal app bundle
+        run: |
+          set -euo pipefail
+          env CODEXBAR_SIGNING=adhoc ARCHES="arm64 x86_64" ./Scripts/package_app.sh release
+
+      - name: Verify app signature
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=4 CodexBar.app
+
+      - name: Archive app
+        run: |
+          set -euo pipefail
+          ditto -c -k --sequesterRsrc --keepParent CodexBar.app CodexBar.app.zip
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: CodexBar-app
+          path: CodexBar.app.zip
+          if-no-files-found: error
+          retention-days: 14
