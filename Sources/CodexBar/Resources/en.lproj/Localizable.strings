@@ -905,6 +905,11 @@
 "Access key ID" = "Access key ID";
 "Add Account" = "Add Account";
 "Adding Account…" = "Adding Account…";
+"Import JSON…" = "Import JSON…";
+"Importing JSON…" = "Importing JSON…";
+"Import sub2api JSON" = "Import sub2api JSON";
+"Import" = "Import";
+"imported_sub2api_accounts_message" = "Imported %d OpenAI OAuth account(s), updated %d: %@";
 "Antigravity login failed" = "Antigravity login failed";
 "Antigravity login timed out" = "Antigravity login timed out";
 "Auth source" = "Auth source";

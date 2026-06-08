@@ -83,11 +83,7 @@ struct ManagedCodexHomeFactory: ManagedCodexHomeProducing {
     }
 
     static func defaultRootURL(fileManager: FileManager = .default) -> URL {
-        let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? fileManager.homeDirectoryForCurrentUser
-        return base
-            .appendingPathComponent("CodexBar", isDirectory: true)
-            .appendingPathComponent("managed-codex-homes", isDirectory: true)
+        CodexManagedHomePaths.defaultRootURL(fileManager: fileManager)
     }
 }
 

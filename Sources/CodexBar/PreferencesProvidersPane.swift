@@ -1,6 +1,7 @@
 import AppKit
 import CodexBarCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 struct ProvidersPane: View {
@@ -110,6 +111,9 @@ struct ProvidersPane: View {
                                     Task { @MainActor in
                                         await self.addManagedCodexAccount()
                                     }
+                                },
+                                importAccount: {
+                                    self.requestSub2APIAccountImport()
                                 })
                         }
                     })
@@ -253,6 +257,7 @@ struct ProvidersPane: View {
             hasUnreadableManagedAccountStore: projection.hasUnreadableAddedAccountStore,
             isAuthenticatingManagedAccount: self.managedCodexAccountCoordinator.isAuthenticatingManagedAccount,
             authenticatingManagedAccountID: self.managedCodexAccountCoordinator.authenticatingManagedAccountID,
+            isImportingManagedAccount: self.managedCodexAccountCoordinator.isImportingManagedAccount,
             isRemovingManagedAccount: self.managedCodexAccountCoordinator.isRemovingManagedAccount,
             isAuthenticatingLiveAccount: self.isAuthenticatingLiveCodexAccount,
             isPromotingSystemAccount: self.codexAccountPromotionCoordinator.isPromotingSystemAccount,
@@ -288,6 +293,47 @@ struct ProvidersPane: View {
         do {
             let account = try await self.managedCodexAccountCoordinator.authenticateManagedAccount()
             self.selectCodexVisibleAccountForAuthenticatedManagedAccount(account)
+            await self.refreshCodexProvider()
+        } catch {
+            self.codexAccountsNotice = self.codexAccountsNotice(for: error)
+        }
+    }
+
+    func requestSub2APIAccountImport() {
+        self.codexAccountsNotice = nil
+        guard let state = self.codexAccountsSectionState(for: .codex), state.canImportAccount else {
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = L("Import sub2api JSON")
+        panel.prompt = L("Import")
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json]
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        Task { @MainActor in
+            await self.importSub2APIAccounts(from: url)
+        }
+    }
+
+    func importSub2APIAccounts(from url: URL) async {
+        self.codexAccountsNotice = nil
+        do {
+            let summary = try await self.managedCodexAccountCoordinator.importSub2APIAccounts(from: url)
+            if let first = summary.importedAccounts.first?.account {
+                self.selectCodexVisibleAccountForAuthenticatedManagedAccount(first)
+            }
+            if let metadata = ProviderDescriptorRegistry.metadata[.codex] {
+                self.settings.setProviderEnabled(provider: .codex, metadata: metadata, enabled: true)
+            }
+            self.settings.codexUsageDataSource = .oauth
+            self.codexAccountsNotice = self.codexAccountsImportNotice(summary)
             await self.refreshCodexProvider()
         } catch {
             self.codexAccountsNotice = self.codexAccountsNotice(for: error)
@@ -707,9 +753,35 @@ struct ProvidersPane: View {
             return CodexAccountsSectionNotice(text: error.userFacingMessage, tone: .warning)
         }
 
+        if let error = error as? Sub2APIAccountImporterError {
+            return CodexAccountsSectionNotice(
+                text: error.localizedDescription,
+                tone: .warning)
+        }
+
         return CodexAccountsSectionNotice(
             text: error.localizedDescription,
             tone: .warning)
+    }
+
+    private func codexAccountsImportNotice(_ summary: Sub2APIImportSummary) -> CodexAccountsSectionNotice {
+        let names = summary.importedAccounts
+            .prefix(3)
+            .map { self.displayName(for: $0.account) }
+            .joined(separator: ", ")
+        let extraCount = max(summary.importedAccounts.count - 3, 0)
+        let suffix = extraCount > 0 ? " +\(extraCount)" : ""
+        let message = String(
+            format: L("imported_sub2api_accounts_message"),
+            summary.importedAccounts.count,
+            summary.updatedCount,
+            names + suffix)
+        return CodexAccountsSectionNotice(text: message, tone: .secondary)
+    }
+
+    private func displayName(for account: ManagedCodexAccount) -> String {
+        guard let workspaceLabel = account.workspaceLabel else { return account.email }
+        return "\(account.email) / \(workspaceLabel)"
     }
 
     private func presentLoginAlert(title: String, message: String) {

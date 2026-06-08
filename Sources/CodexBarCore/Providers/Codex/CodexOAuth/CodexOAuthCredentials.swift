@@ -133,7 +133,7 @@ public enum CodexOAuthCredentialsStore {
         }
 
         json["tokens"] = tokens
-        json["last_refresh"] = ISO8601DateFormatter().string(from: Date())
+        json["last_refresh"] = ISO8601DateFormatter().string(from: credentials.lastRefresh ?? Date())
 
         let data = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
         let directory = url.deletingLastPathComponent()

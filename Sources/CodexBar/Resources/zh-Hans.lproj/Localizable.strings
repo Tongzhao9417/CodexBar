@@ -879,6 +879,11 @@
 "Access key ID" = "访问密钥 ID";
 "Add Account" = "添加账号";
 "Adding Account…" = "正在添加账号…";
+"Import JSON…" = "导入 JSON…";
+"Importing JSON…" = "正在导入 JSON…";
+"Import sub2api JSON" = "导入 sub2api JSON";
+"Import" = "导入";
+"imported_sub2api_accounts_message" = "已导入 %d 个 OpenAI OAuth 账户，更新 %d 个：%@";
 "Antigravity login failed" = "Antigravity 登录失败";
 "Antigravity login timed out" = "Antigravity 登录超时";
 "Auth source" = "认证来源";

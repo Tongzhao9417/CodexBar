@@ -28,6 +28,7 @@ struct CodexAccountsSectionState: Equatable {
     let hasUnreadableManagedAccountStore: Bool
     let isAuthenticatingManagedAccount: Bool
     let authenticatingManagedAccountID: UUID?
+    let isImportingManagedAccount: Bool
     let isRemovingManagedAccount: Bool
     let isAuthenticatingLiveAccount: Bool
     let isPromotingSystemAccount: Bool
@@ -57,6 +58,7 @@ struct CodexAccountsSectionState: Equatable {
     var canAddAccount: Bool {
         !self.hasUnreadableManagedAccountStore &&
             !self.isAuthenticatingManagedAccount &&
+            !self.isImportingManagedAccount &&
             !self.isRemovingManagedAccount &&
             !self.isAuthenticatingLiveAccount &&
             !self.isPromotingSystemAccount
@@ -69,6 +71,14 @@ struct CodexAccountsSectionState: Equatable {
         return L("Add Account")
     }
 
+    var canImportAccount: Bool {
+        self.canAddAccount
+    }
+
+    var importAccountTitle: String {
+        self.isImportingManagedAccount ? L("Importing JSON…") : L("Import JSON…")
+    }
+
     func showsLiveBadge(for account: CodexVisibleAccount) -> Bool {
         account.isLive
     }
@@ -76,6 +86,7 @@ struct CodexAccountsSectionState: Equatable {
     var isSystemSelectionDisabled: Bool {
         self.hasUnreadableManagedAccountStore ||
             self.isAuthenticatingManagedAccount ||
+            self.isImportingManagedAccount ||
             self.isRemovingManagedAccount ||
             self.isAuthenticatingLiveAccount ||
             self.isPromotingSystemAccount
@@ -90,6 +101,7 @@ struct CodexAccountsSectionState: Equatable {
     func canReauthenticate(_ account: CodexVisibleAccount) -> Bool {
         guard account.canReauthenticate else { return false }
         guard self.isAuthenticatingManagedAccount == false else { return false }
+        guard self.isImportingManagedAccount == false else { return false }
         guard self.isRemovingManagedAccount == false else { return false }
         guard self.isAuthenticatingLiveAccount == false else { return false }
         guard self.isPromotingSystemAccount == false else { return false }
@@ -102,6 +114,7 @@ struct CodexAccountsSectionState: Equatable {
     func canRemove(_ account: CodexVisibleAccount) -> Bool {
         guard account.canRemove else { return false }
         guard self.isAuthenticatingManagedAccount == false else { return false }
+        guard self.isImportingManagedAccount == false else { return false }
         guard self.isRemovingManagedAccount == false else { return false }
         guard self.isAuthenticatingLiveAccount == false else { return false }
         guard self.isPromotingSystemAccount == false else { return false }
@@ -130,6 +143,7 @@ struct CodexAccountsSectionView: View {
     let removeAccount: (CodexVisibleAccount) -> Void
     let requestSystemVisibleAccount: (String) -> Void
     let addAccount: () -> Void
+    let importAccount: () -> Void
 
     var body: some View {
         ProviderSettingsSection(title: L("Accounts")) {
@@ -160,6 +174,7 @@ struct CodexAccountsSectionView: View {
                 }
                 .disabled(
                     self.state.isAuthenticatingManagedAccount ||
+                        self.state.isImportingManagedAccount ||
                         self.state.isRemovingManagedAccount ||
                         self.state.isAuthenticatingLiveAccount ||
                         self.state.isPromotingSystemAccount)
@@ -206,12 +221,21 @@ struct CodexAccountsSectionView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Button(self.state.addAccountTitle) {
-                self.addAccount()
+            HStack(spacing: 8) {
+                Button(self.state.addAccountTitle) {
+                    self.addAccount()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(self.state.canAddAccount == false)
+
+                Button(self.state.importAccountTitle) {
+                    self.importAccount()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(self.state.canImportAccount == false)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(self.state.canAddAccount == false)
         }
     }
 
