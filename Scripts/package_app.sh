@@ -3,6 +3,7 @@ set -euo pipefail
 CONF=${1:-release}
 ALLOW_LLDB=${CODEXBAR_ALLOW_LLDB:-0}
 SIGNING_MODE=${CODEXBAR_SIGNING:-}
+SKIP_WIDGET_EXTENSION=${CODEXBAR_SKIP_WIDGET_EXTENSION:-0}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 LOWER_CONF=$(printf "%s" "$CONF" | tr '[:upper:]' '[:lower:]')
@@ -366,7 +367,11 @@ fi
 if [[ -n "$(resolve_binary_path "CodexBarClaudeWatchdog" "${ARCH_LIST[0]}")" ]]; then
   install_binary "CodexBarClaudeWatchdog" "$APP/Contents/Helpers/CodexBarClaudeWatchdog"
 fi
-install_widget_extension
+if [[ "$SKIP_WIDGET_EXTENSION" == "1" ]]; then
+  echo "Skipping CodexBarWidget extension packaging."
+else
+  install_widget_extension
+fi
 # Embed Sparkle.framework
 if [[ -d ".build/$CONF/Sparkle.framework" ]]; then
   cp -R ".build/$CONF/Sparkle.framework" "$APP/Contents/Frameworks/"
