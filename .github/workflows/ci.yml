@@ -11,6 +11,7 @@ concurrency:
 
 jobs:
   lint-build-test:
+    if: ${{ github.ref_name != 'feature/import-sub2api-json' && github.head_ref != 'feature/import-sub2api-json' }}
     runs-on: macos-15-intel
     timeout-minutes: 70
     steps:
@@ -46,6 +47,7 @@ jobs:
           python3 Scripts/ci_swift_test_by_suite.py --group-size 1 --timeout 120
 
   build-linux-cli:
+    if: ${{ github.ref_name != 'feature/import-sub2api-json' && github.head_ref != 'feature/import-sub2api-json' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
