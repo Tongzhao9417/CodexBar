@@ -498,21 +498,10 @@ extension UsageStore {
         snapshots: [CodexAccountUsageSnapshot] = [],
         activeVisibleAccountID: String?) -> [CodexVisibleAccount]
     {
-        let accounts = CodexAccountPresentationOrdering.orderedAccounts(
+        CodexAccountPresentationOrdering.orderedAccounts(
             accounts,
             snapshots: snapshots,
             activeVisibleAccountID: activeVisibleAccountID)
-        let limit = Self.tokenAccountMenuSnapshotLimit
-        if accounts.count <= limit { return accounts }
-        var limited = Array(accounts.prefix(limit))
-        if let activeVisibleAccountID,
-           let active = accounts.first(where: { $0.id == activeVisibleAccountID }),
-           !limited.contains(where: { $0.id == activeVisibleAccountID })
-        {
-            limited.removeLast()
-            limited.append(active)
-        }
-        return limited
     }
 
     func fetchOutcome(
