@@ -29,10 +29,10 @@ jobs:
           done
           /usr/bin/xcodebuild -version
 
-      - name: Build universal app bundle
+      - name: Build arm64 app bundle
         run: |
           set -euo pipefail
-          env CODEXBAR_SIGNING=adhoc ARCHES="arm64 x86_64" ./Scripts/package_app.sh release
+          env CODEXBAR_SIGNING=adhoc ARCHES="arm64" ./Scripts/package_app.sh release
 
       - name: Verify app signature
         run: |
@@ -47,7 +47,7 @@ jobs:
       - name: Upload app artifact
         uses: actions/upload-artifact@v6
         with:
-          name: CodexBar-app
+          name: CodexBar-app-arm64
           path: CodexBar.app.zip
           if-no-files-found: error
           retention-days: 14
