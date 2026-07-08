@@ -154,18 +154,28 @@ public struct RemoteSessionFetcher: Sendable {
         }
     }
 
-    private func tailscaleBinary(environment: [String: String]) -> String? {
-        self.findExecutable("tailscale", environment: environment) ?? {
-            let bundled = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-            return FileManager.default.isExecutableFile(atPath: bundled) ? bundled : nil
-        }()
+    func tailscaleBinary(environment: [String: String]) -> String? {
+        self.findExecutable("tailscale", environment: environment) { path in
+            !Self.isTailscaleAppBundleExecutable(path)
+        }
     }
 
-    private func findExecutable(_ name: String, environment: [String: String]) -> String? {
+    private static func isTailscaleAppBundleExecutable(_ path: String) -> Bool {
+        URL(fileURLWithPath: path)
+            .resolvingSymlinksInPath()
+            .path
+            .hasSuffix("/Tailscale.app/Contents/MacOS/Tailscale")
+    }
+
+    private func findExecutable(
+        _ name: String,
+        environment: [String: String],
+        isAllowed: (String) -> Bool = { _ in true }) -> String?
+    {
         let path = environment["PATH"] ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         return path.split(separator: ":")
             .map { String($0) + "/" + name }
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
+            .first { FileManager.default.isExecutableFile(atPath: $0) && isAllowed($0) }
     }
 
     public static func sanitizedHosts(_ hosts: [String]) -> [String] {
