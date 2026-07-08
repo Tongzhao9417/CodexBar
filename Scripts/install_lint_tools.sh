@@ -6,14 +6,44 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLS_DIR="${ROOT_DIR}/.build/lint-tools"
 BIN_DIR="${TOOLS_DIR}/bin"
 
-SWIFTFORMAT_VERSION="0.59.1"
-SWIFTLINT_VERSION="0.63.2"
+SWIFTFORMAT_VERSION="0.61.1"
+SWIFTLINT_VERSION="0.65.0"
 
-SWIFTFORMAT_SHA256_DARWIN="8b6289b608a44e73cd3851c3589dbd7c553f32cc805aa54b3a496ce2b90febe7"
-SWIFTLINT_SHA256_DARWIN="c59a405c85f95b92ced677a500804e081596a4cae4a6a485af76065557d6ed29"
+SWIFTFORMAT_SHA256_DARWIN="b990400779aceb7d7020796eb9ba814d4480543f671d38fc0ff48cb72f04c584"
+SWIFTLINT_SHA256_DARWIN="d6cb0aa7a2f5f1ef306fc9e37bcb54dc9a26facc8f7784ac0c3dd3eccf5c6ba6"
+SWIFTFORMAT_SHA256_LINUX_X86_64="7bc8706e3fd51963f1f29eb99098ebdf482f3497fa527c68e6cf75cbee29c77a"
+SWIFTLINT_SHA256_LINUX_X86_64="79306a34e5c7cc55a220cd108cbb861dcad5f10138dcdf261e2624ae8b0a486b"
+SWIFTFORMAT_SHA256_LINUX_ARM64="42a35b557a6d56975fba3a48e78d39ab5388c8faac65d4819f25d3e20c7504c0"
+SWIFTLINT_SHA256_LINUX_ARM64="12d3b84bc5b69ae13a99a5a5c79904f9ce25867f099f6368d0037854f9ee6c26"
 
 log() { printf '%s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+INSTALL_SWIFTFORMAT=false
+INSTALL_SWIFTLINT=false
+
+if [[ "$#" -eq 0 ]]; then
+  INSTALL_SWIFTFORMAT=true
+  INSTALL_SWIFTLINT=true
+else
+  for tool in "$@"; do
+    case "$tool" in
+      all)
+        INSTALL_SWIFTFORMAT=true
+        INSTALL_SWIFTLINT=true
+        ;;
+      swiftformat)
+        INSTALL_SWIFTFORMAT=true
+        ;;
+      swiftlint)
+        INSTALL_SWIFTLINT=true
+        ;;
+      *)
+        fail "Unknown lint tool '${tool}'. Usage: $(basename "$0") [all|swiftformat|swiftlint]..."
+        ;;
+    esac
+  done
+fi
 
 sha256_value() {
   local path="$1"
@@ -39,6 +69,7 @@ install_zip_binary() {
   local url="$2"
   local expected_sha="$3"
   local binary_name="$4"
+  local installed_name="${5:-$binary_name}"
 
   local tmp_zip
   tmp_zip="$(mktemp -t "${label}.XXXX")"
@@ -71,7 +102,7 @@ install_zip_binary() {
     fail "${label} binary '${binary_name}' not found in archive"
   fi
 
-  install -m 0755 "$extracted_path" "${BIN_DIR}/${binary_name}"
+  install -m 0755 "$extracted_path" "${BIN_DIR}/${installed_name}"
 
   rm -f "$tmp_zip"
   rm -rf "$tmp_dir"
@@ -79,13 +110,21 @@ install_zip_binary() {
 
 mkdir -p "$BIN_DIR"
 
-if [[ -x "${BIN_DIR}/swiftformat" && -x "${BIN_DIR}/swiftlint" ]]; then
-  if [[ "$("${BIN_DIR}/swiftformat" --version 2>/dev/null || true)" == "${SWIFTFORMAT_VERSION}" ]] \
+swiftformat_installed() {
+  [[ -x "${BIN_DIR}/swiftformat" ]] \
+    && [[ "$("${BIN_DIR}/swiftformat" --version 2>/dev/null || true)" == "${SWIFTFORMAT_VERSION}" ]]
+}
+
+swiftlint_installed() {
+  [[ -x "${BIN_DIR}/swiftlint" ]] \
     && [[ "$("${BIN_DIR}/swiftlint" version 2>/dev/null || true)" == "${SWIFTLINT_VERSION}" ]]
-  then
-    log "==> Lint tools already installed (${SWIFTFORMAT_VERSION}, ${SWIFTLINT_VERSION})"
-    exit 0
-  fi
+}
+
+if { [[ "$INSTALL_SWIFTFORMAT" != true ]] || swiftformat_installed; } \
+  && { [[ "$INSTALL_SWIFTLINT" != true ]] || swiftlint_installed; }
+then
+  log "==> Requested lint tools already installed"
+  exit 0
 fi
 
 OS="$(uname -s)"
@@ -96,29 +135,45 @@ case "$OS" in
     SWIFTFORMAT_URL="https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat.zip"
     SWIFTLINT_URL="https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip"
 
-    install_zip_binary "SwiftFormat ${SWIFTFORMAT_VERSION}" "$SWIFTFORMAT_URL" "$SWIFTFORMAT_SHA256_DARWIN" "swiftformat"
-    install_zip_binary "SwiftLint ${SWIFTLINT_VERSION}" "$SWIFTLINT_URL" "$SWIFTLINT_SHA256_DARWIN" "swiftlint"
+    if [[ "$INSTALL_SWIFTFORMAT" == true ]] && ! swiftformat_installed; then
+      install_zip_binary "SwiftFormat ${SWIFTFORMAT_VERSION}" "$SWIFTFORMAT_URL" "$SWIFTFORMAT_SHA256_DARWIN" "swiftformat"
+    fi
+    if [[ "$INSTALL_SWIFTLINT" == true ]] && ! swiftlint_installed; then
+      install_zip_binary "SwiftLint ${SWIFTLINT_VERSION}" "$SWIFTLINT_URL" "$SWIFTLINT_SHA256_DARWIN" "swiftlint"
+    fi
     ;;
   Linux)
     case "$ARCH" in
       x86_64)
         SWIFTFORMAT_URL="https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat_linux.zip"
         SWIFTLINT_URL="https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/swiftlint_linux_amd64.zip"
+        SWIFTFORMAT_BINARY="swiftformat_linux"
+        SWIFTFORMAT_SHA256="$SWIFTFORMAT_SHA256_LINUX_X86_64"
+        SWIFTLINT_SHA256="$SWIFTLINT_SHA256_LINUX_X86_64"
         ;;
       aarch64|arm64)
         SWIFTFORMAT_URL="https://github.com/nicklockwood/SwiftFormat/releases/download/${SWIFTFORMAT_VERSION}/swiftformat_linux_aarch64.zip"
         SWIFTLINT_URL="https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/swiftlint_linux_arm64.zip"
+        SWIFTFORMAT_BINARY="swiftformat_linux_aarch64"
+        SWIFTFORMAT_SHA256="$SWIFTFORMAT_SHA256_LINUX_ARM64"
+        SWIFTLINT_SHA256="$SWIFTLINT_SHA256_LINUX_ARM64"
         ;;
       *)
         fail "Unsupported Linux arch: ${ARCH}"
         ;;
     esac
 
-    # SHA256 is intentionally only enforced for the macOS CI path.
-    # If we later run lint on Linux CI, add pinned SHAs here as well.
-    log "WARN: Linux SHA256 verification not configured for ${ARCH}; installing anyway."
-    install_zip_binary "SwiftFormat ${SWIFTFORMAT_VERSION}" "$SWIFTFORMAT_URL" "" "swiftformat"
-    install_zip_binary "SwiftLint ${SWIFTLINT_VERSION}" "$SWIFTLINT_URL" "" "swiftlint"
+    if { [[ "$INSTALL_SWIFTFORMAT" == true ]] && [[ -z "$SWIFTFORMAT_SHA256" ]]; } \
+      || { [[ "$INSTALL_SWIFTLINT" == true ]] && [[ -z "$SWIFTLINT_SHA256" ]]; }
+    then
+      log "WARN: Linux SHA256 verification not configured for ${ARCH}; installing anyway."
+    fi
+    if [[ "$INSTALL_SWIFTFORMAT" == true ]] && ! swiftformat_installed; then
+      install_zip_binary "SwiftFormat ${SWIFTFORMAT_VERSION}" "$SWIFTFORMAT_URL" "$SWIFTFORMAT_SHA256" "$SWIFTFORMAT_BINARY" "swiftformat"
+    fi
+    if [[ "$INSTALL_SWIFTLINT" == true ]] && ! swiftlint_installed; then
+      install_zip_binary "SwiftLint ${SWIFTLINT_VERSION}" "$SWIFTLINT_URL" "$SWIFTLINT_SHA256" "swiftlint"
+    fi
     ;;
   *)
     fail "Unsupported OS: ${OS}"
@@ -126,5 +181,9 @@ case "$OS" in
 esac
 
 log "==> Installed lint tools to ${BIN_DIR}"
-"${BIN_DIR}/swiftformat" --version
-"${BIN_DIR}/swiftlint" version
+if [[ "$INSTALL_SWIFTFORMAT" == true ]]; then
+  "${BIN_DIR}/swiftformat" --version
+fi
+if [[ "$INSTALL_SWIFTLINT" == true ]]; then
+  "${BIN_DIR}/swiftlint" version
+fi

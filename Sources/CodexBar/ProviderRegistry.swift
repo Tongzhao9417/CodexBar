@@ -81,12 +81,27 @@ struct ProviderRegistry {
                                 }
                             }
                         },
-                        costUsageHistoryDays: settings.costUsageHistoryDays)
+                        costUsageHistoryDays: settings.costUsageHistoryDays,
+                        persistsCLISessions: true,
+                        persistentCLISessionIdleWindow: Self.persistentCLISessionIdleWindow(
+                            refreshInterval: Self.nominalRefreshInterval(for: settings.refreshFrequency)))
                 })
             specs[provider] = spec
         }
 
         return specs
+    }
+
+    static func persistentCLISessionIdleWindow(refreshInterval: TimeInterval?) -> TimeInterval {
+        max(180, (refreshInterval ?? 120) + 60)
+    }
+
+    /// `RefreshFrequency.seconds` is nil for `.adaptive`, which would collapse the idle window to
+    /// its floor and churn persistent CLI sessions between adaptive ticks. No `UsageStore` exists
+    /// when specs are built, so `.adaptive` maps to the policy's nominal interval instead of a
+    /// live decision; `.manual` stays nil.
+    static func nominalRefreshInterval(for frequency: RefreshFrequency) -> TimeInterval? {
+        frequency == .adaptive ? AdaptiveRefreshPolicy.nominalIntervalForHeuristics : frequency.seconds
     }
 
     @MainActor
@@ -123,25 +138,11 @@ struct ProviderRegistry {
             provider: provider,
             settings: settings,
             override: tokenOverride)
-        var env = ProviderConfigEnvironment.applyProviderConfigOverrides(
+        var env = ProviderEnvironmentResolver.resolve(
             base: base,
             provider: provider,
-            config: settings.providerConfig(for: provider))
-        // If token account is selected, use its token instead of config's apiKey
-        if let account {
-            TokenAccountSupportCatalog.scrubEnvironmentForSelectedAccount(
-                &env,
-                provider: provider,
-                token: account.token)
-            if let override = TokenAccountSupportCatalog.envOverride(
-                for: provider,
-                token: account.token)
-            {
-                for (key, value) in override {
-                    env[key] = value
-                }
-            }
-        }
+            config: settings.providerConfig(for: provider),
+            selectedAccount: account)
         // Codex account routing scopes remote account fetches such as identity, plan,
         // quotas, and dashboard data. Token-cost/session history is intentionally handled
         // separately because it is provider-level local telemetry from this Mac's Codex sessions,
@@ -152,6 +153,8 @@ struct ProviderRegistry {
                 env = CodexHomeScope.scopedEnvironment(base: env, codexHome: managedHomePath)
             } else if let liveHomePath = settings.liveSystemCodexHomePath(forActiveSource: codexActiveSource) {
                 env = CodexHomeScope.scopedEnvironment(base: env, codexHome: liveHomePath)
+            } else if let profileHomePath = settings.profileCodexHomePath(forActiveSource: codexActiveSource) {
+                env = CodexHomeScope.scopedEnvironment(base: env, codexHome: profileHomePath)
             }
         }
         return env

@@ -17,14 +17,36 @@ enum MenuBarMetricWindowResolver {
     {
         guard let snapshot else { return nil }
         switch preference {
+        case .monthlyPlan:
+            return snapshot.extraRateWindows?.first { $0.id == "mistral-monthly-plan" }?.window
         case .extraUsage:
             return Self.extraUsageWindow(snapshot: snapshot)
         case .tertiary:
-            return Self.window(in: snapshot, following: Self.tertiaryOrder(for: provider))
+            return Self.requestedWindow(
+                provider: provider,
+                snapshot: snapshot,
+                lanes: Self.tertiaryOrder(for: provider))
         case .primary:
-            return Self.window(in: snapshot, following: Self.primaryOrder(for: provider))
+            return Self.requestedWindow(
+                provider: provider,
+                snapshot: snapshot,
+                lanes: Self.primaryOrder(for: provider))
         case .secondary:
-            return Self.window(in: snapshot, following: Self.secondaryOrder(for: provider))
+            return Self.requestedWindow(
+                provider: provider,
+                snapshot: snapshot,
+                lanes: Self.secondaryOrder(for: provider))
+        case .primaryAndSecondary:
+            // Claude accounts that only expose an enterprise/extra-usage spend limit have no real
+            // session/weekly lanes; surface the spend limit (as `.automatic` does) instead of an empty
+            // or 0% placeholder lane.
+            if provider == .claude, let spendLimit = Self.claudeSpendLimitWindow(snapshot: snapshot) {
+                return spendLimit
+            }
+            return Self.mostConstrainedWindow(
+                primary: snapshot.primary,
+                secondary: snapshot.secondary,
+                tertiary: nil)
         case .average:
             return Self.averageWindow(provider: provider, snapshot: snapshot, supportsAverage: supportsAverage)
         case .automatic:
@@ -84,10 +106,14 @@ enum MenuBarMetricWindowResolver {
 
     private static func automaticWindow(provider: UsageProvider, snapshot: UsageSnapshot) -> RateWindow? {
         if provider == .antigravity {
+            if let window = mostConstrainedAntigravityQuotaSummaryWindow(snapshot: snapshot) {
+                return window
+            }
             return self.mostConstrainedWindow(
                 primary: snapshot.primary,
                 secondary: snapshot.secondary,
                 tertiary: snapshot.tertiary)
+                ?? self.mostConstrainedAntigravityLegacyExtraWindow(snapshot: snapshot)
         }
         if provider == .perplexity {
             return snapshot.automaticPerplexityWindow()
@@ -101,25 +127,73 @@ enum MenuBarMetricWindowResolver {
         if provider == .factory || provider == .kimi {
             return snapshot.secondary ?? snapshot.primary
         }
+        if provider == .litellm {
+            return snapshot.secondary ?? snapshot.primary
+        }
         if provider == .copilot,
            let primary = snapshot.primary,
            let secondary = snapshot.secondary
         {
             return primary.usedPercent >= secondary.usedPercent ? primary : secondary
         }
-        if provider == .cursor || provider == .minimax {
+        if provider == .cursor {
+            return Self.mostConstrainedCursorWindow(
+                total: snapshot.primary,
+                auto: snapshot.secondary,
+                api: snapshot.tertiary)
+        }
+        if provider == .minimax {
             return Self.mostConstrainedWindow(
                 primary: snapshot.primary,
                 secondary: snapshot.secondary,
                 tertiary: snapshot.tertiary)
         }
-        if provider == .claude,
-           Self.shouldUseClaudeSpendLimit(providerCost: snapshot.providerCost, snapshot: snapshot),
-           let extraUsage = Self.extraUsageWindow(snapshot: snapshot)
-        {
-            return extraUsage
+        if provider == .claude, let spendLimit = Self.claudeSpendLimitWindow(snapshot: snapshot) {
+            return spendLimit
         }
         return snapshot.primary ?? snapshot.secondary
+    }
+
+    private static let antigravityQuotaSummaryWindowIDPrefix = "antigravity-quota-summary-"
+    private static let antigravityCompactFallbackWindowIDPrefix = "antigravity-compact-fallback-"
+
+    private static func mostConstrainedAntigravityQuotaSummaryWindow(snapshot: UsageSnapshot) -> RateWindow? {
+        let windows = snapshot.extraRateWindows?
+            .filter { $0.usageKnown && $0.id.hasPrefix(Self.antigravityQuotaSummaryWindowIDPrefix) }
+            .map(\.window) ?? []
+        guard !windows.isEmpty else { return nil }
+
+        let usableWindows = windows.filter { $0.usedPercent < 100 }
+        if let maxUsable = usableWindows.max(by: { $0.usedPercent < $1.usedPercent }) {
+            return maxUsable
+        }
+        return windows.max(by: { $0.usedPercent < $1.usedPercent })
+    }
+
+    private static func mostConstrainedAntigravityLegacyExtraWindow(snapshot: UsageSnapshot) -> RateWindow? {
+        let windows = snapshot.extraRateWindows?
+            .filter {
+                $0.usageKnown && $0.id.hasPrefix(Self.antigravityCompactFallbackWindowIDPrefix)
+            }
+            .map(\.window) ?? []
+        guard !windows.isEmpty else { return nil }
+
+        let usableWindows = windows.filter { $0.usedPercent < 100 }
+        if let maxUsable = usableWindows.max(by: { $0.usedPercent < $1.usedPercent }) {
+            return maxUsable
+        }
+        return windows.max(by: { $0.usedPercent < $1.usedPercent })
+    }
+
+    private static func requestedWindow(
+        provider: UsageProvider,
+        snapshot: UsageSnapshot,
+        lanes: [Lane]) -> RateWindow?
+    {
+        self.window(in: snapshot, following: lanes)
+            ?? (provider == .antigravity
+                ? self.mostConstrainedAntigravityLegacyExtraWindow(snapshot: snapshot)
+                : nil)
     }
 
     private static func window(in snapshot: UsageSnapshot, following lanes: [Lane]) -> RateWindow? {
@@ -153,6 +227,37 @@ enum MenuBarMetricWindowResolver {
         return windows.max(by: { $0.usedPercent < $1.usedPercent })
     }
 
+    private static func mostConstrainedCursorWindow(
+        total: RateWindow?,
+        auto: RateWindow?,
+        api: RateWindow?)
+        -> RateWindow?
+    {
+        if let total, total.usedPercent >= 100 {
+            return total
+        }
+
+        let subquotaWindows = [auto, api].compactMap(\.self)
+        let usableSubquotaWindows = subquotaWindows.filter { $0.usedPercent < 100 }
+        if !subquotaWindows.isEmpty, usableSubquotaWindows.isEmpty {
+            return subquotaWindows.max(by: { $0.usedPercent < $1.usedPercent })
+        }
+
+        return ([total].compactMap(\.self) + usableSubquotaWindows)
+            .max(by: { $0.usedPercent < $1.usedPercent })
+    }
+
+    /// The Claude spend-limit window when the account only exposes an enterprise/extra-usage spend limit
+    /// and has no real session/weekly quota lanes (`primary` nil, a `.spendLimit` window, or an explicitly
+    /// marked placeholder). Lets the automatic and combined metrics surface the spend limit instead of an empty
+    /// or 0% placeholder lane. Returns nil for accounts that expose genuine quota lanes.
+    static func claudeSpendLimitWindow(snapshot: UsageSnapshot) -> RateWindow? {
+        guard self.shouldUseClaudeSpendLimit(providerCost: snapshot.providerCost, snapshot: snapshot) else {
+            return nil
+        }
+        return self.extraUsageWindow(snapshot: snapshot)
+    }
+
     private static func shouldUseClaudeSpendLimit(
         providerCost: ProviderCostSnapshot?,
         snapshot: UsageSnapshot)
@@ -163,10 +268,7 @@ enum MenuBarMetricWindowResolver {
               snapshot.tertiary == nil
         else { return false }
         guard let primary = snapshot.primary else { return true }
-        return primary.usedPercent == 0
-            && primary.windowMinutes == 5 * 60
-            && primary.resetsAt == nil
-            && primary.resetDescription == nil
+        return primary.isSyntheticPlaceholder
     }
 
     private static func extraUsageWindow(snapshot: UsageSnapshot?) -> RateWindow? {

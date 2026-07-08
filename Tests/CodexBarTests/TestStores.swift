@@ -136,7 +136,52 @@ func testConfigStore(suiteName: String, reset: Bool = true) -> CodexBarConfigSto
     return CodexBarConfigStore(fileURL: url)
 }
 
+@MainActor
+func testSettingsStore(
+    suiteName: String,
+    tokenAccountStore: any ProviderTokenAccountStoring = InMemoryTokenAccountStore(),
+    config: CodexBarConfig? = nil) -> SettingsStore
+{
+    let isolatedSuiteName = "\(suiteName)-\(UUID().uuidString)"
+    guard let defaults = UserDefaults(suiteName: isolatedSuiteName) else {
+        preconditionFailure("Could not create test defaults suite")
+    }
+    defaults.removePersistentDomain(forName: isolatedSuiteName)
+    let configStore = testConfigStore(suiteName: isolatedSuiteName)
+    if let config {
+        do {
+            try configStore.save(config)
+        } catch {
+            preconditionFailure("Could not save test config: \(error)")
+        }
+    }
+    return SettingsStore(
+        userDefaults: defaults,
+        configStore: configStore,
+        zaiTokenStore: NoopZaiTokenStore(),
+        syntheticTokenStore: NoopSyntheticTokenStore(),
+        codexCookieStore: InMemoryCookieHeaderStore(),
+        claudeCookieStore: InMemoryCookieHeaderStore(),
+        cursorCookieStore: InMemoryCookieHeaderStore(),
+        opencodeCookieStore: InMemoryCookieHeaderStore(),
+        factoryCookieStore: InMemoryCookieHeaderStore(),
+        minimaxCookieStore: InMemoryMiniMaxCookieStore(),
+        minimaxAPITokenStore: InMemoryMiniMaxAPITokenStore(),
+        kimiTokenStore: InMemoryKimiTokenStore(),
+        kimiK2TokenStore: InMemoryKimiK2TokenStore(),
+        augmentCookieStore: InMemoryCookieHeaderStore(),
+        ampCookieStore: InMemoryCookieHeaderStore(),
+        copilotTokenStore: InMemoryCopilotTokenStore(),
+        tokenAccountStore: tokenAccountStore)
+}
+
 #if os(macOS)
+@MainActor
+func testStatusBar() -> NSStatusBar {
+    // Standalone NSStatusBar instances can crash during swiftpm-testing-helper teardown.
+    .system
+}
+
 @MainActor
 @discardableResult
 func withStatusItemControllerForTesting<T>(

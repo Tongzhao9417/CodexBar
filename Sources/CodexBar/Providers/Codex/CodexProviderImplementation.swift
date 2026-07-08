@@ -1,9 +1,7 @@
 import CodexBarCore
-import CodexBarMacroSupport
 import Foundation
 import SwiftUI
 
-@ProviderImplementationRegistration
 struct CodexProviderImplementation: ProviderImplementation {
     let id: UsageProvider = .codex
     let supportsLoginFlow: Bool = true
@@ -169,9 +167,7 @@ struct CodexProviderImplementation: ProviderImplementation {
                 isVisible: { context.settings.openAIWebAccessEnabled },
                 onChange: nil,
                 trailingText: {
-                    guard let entry = CookieHeaderCache.load(provider: .codex) else { return nil }
-                    let when = entry.storedAt.relativeDescription()
-                    return "Cached: \(entry.sourceLabel) • \(when)"
+                    ProviderCookieSourceUI.cachedTrailingText(provider: .codex)
                 }),
         ]
     }
@@ -201,9 +197,19 @@ struct CodexProviderImplementation: ProviderImplementation {
         else { return }
 
         if let credits = context.store.credits {
+            let remaining = credits.codexCreditLimit?.remaining ?? credits.remaining
             entries.append(.text(
-                String(format: L("credits_remaining"), UsageFormatter.creditsString(from: credits.remaining)),
+                String(format: L("credits_remaining"), UsageFormatter.creditsString(from: remaining)),
                 .primary))
+            if let limit = credits.codexCreditLimit {
+                var parts = [
+                    L("%@ used", UsageFormatter.creditsNumberString(from: limit.used)),
+                ]
+                if let resetsAt = limit.resetsAt {
+                    parts.append(L("resets %@", UsageFormatter.resetDescription(from: resetsAt)))
+                }
+                entries.append(.text(parts.joined(separator: " · "), .secondary))
+            }
             if let latest = credits.events.first {
                 entries.append(.text(
                     String(format: L("last_spend"), UsageFormatter.creditEventSummary(latest)),

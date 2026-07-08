@@ -1,16 +1,15 @@
-import CodexBarMacroSupport
 import Foundation
 
-@ProviderDescriptorRegistration
-@ProviderDescriptorDefinition
 public enum MistralProviderDescriptor {
+    public static let descriptor: ProviderDescriptor = Self.makeDescriptor()
+
     static func makeDescriptor() -> ProviderDescriptor {
         ProviderDescriptor(
             id: .mistral,
             metadata: ProviderMetadata(
                 id: .mistral,
                 displayName: "Mistral",
-                sessionLabel: "Monthly",
+                sessionLabel: "Balance",
                 weeklyLabel: "",
                 opusLabel: nil,
                 supportsOpus: false,
@@ -55,28 +54,120 @@ struct MistralWebFetchStrategy: ProviderFetchStrategy {
         let cookieSource = context.settings?.mistral?.cookieSource ?? .auto
         do {
             let (cookieHeader, csrfToken) = try Self.resolveCookieHeader(context: context, allowCached: true)
-            let snapshot = try await MistralUsageFetcher.fetchUsage(
+            let usage = try await Self.fetchUsageWithVibe(
                 cookieHeader: cookieHeader,
                 csrfToken: csrfToken,
                 timeout: context.webTimeout)
             return self.makeResult(
-                usage: snapshot.toUsageSnapshot(),
+                usage: usage,
                 sourceLabel: "web")
         } catch MistralUsageError.invalidCredentials where cookieSource != .manual {
             #if os(macOS)
             CookieHeaderCache.clear(provider: .mistral)
             let (cookieHeader, csrfToken) = try Self.resolveCookieHeader(context: context, allowCached: false)
-            let snapshot = try await MistralUsageFetcher.fetchUsage(
+            let usage = try await Self.fetchUsageWithVibe(
                 cookieHeader: cookieHeader,
                 csrfToken: csrfToken,
                 timeout: context.webTimeout)
             return self.makeResult(
-                usage: snapshot.toUsageSnapshot(),
+                usage: usage,
                 sourceLabel: "web")
             #else
             throw MistralUsageError.invalidCredentials
             #endif
         }
+    }
+
+    static func fetchUsageWithVibe(
+        cookieHeader: String,
+        csrfToken: String?,
+        timeout: TimeInterval,
+        transport: ProviderHTTPTransport = ProviderHTTPClient.shared) async throws -> UsageSnapshot
+    {
+        let deadline = Date().addingTimeInterval(timeout)
+        let snapshot = try await MistralUsageFetcher.fetchUsage(
+            cookieHeader: cookieHeader,
+            csrfToken: csrfToken,
+            timeout: timeout,
+            transport: transport)
+        var remaining = deadline.timeIntervalSinceNow
+        let vibeResult: MistralUsageFetcher.MistralVibeUsageResult? = if let csrfToken, remaining > 0 {
+            try await Self.fetchOptionalVibeUsage(
+                csrfToken: csrfToken,
+                cookieHeader: cookieHeader,
+                timeout: min(remaining, 4),
+                transport: transport)
+        } else {
+            nil
+        }
+        remaining = deadline.timeIntervalSinceNow
+        let credits: MistralCreditsSnapshot? = if remaining > 0 {
+            try await Self.fetchOptionalCredits(
+                cookieHeader: cookieHeader,
+                csrfToken: csrfToken,
+                timeout: min(remaining, 4),
+                transport: transport)
+        } else {
+            nil
+        }
+        return Self.attachVibeWindow(to: snapshot.with(credits: credits).toUsageSnapshot(), vibeResult: vibeResult)
+    }
+
+    static func fetchOptionalCredits(
+        cookieHeader: String,
+        csrfToken: String?,
+        timeout: TimeInterval,
+        transport: ProviderHTTPTransport = ProviderHTTPClient.shared) async throws
+        -> MistralCreditsSnapshot?
+    {
+        do {
+            return try await MistralUsageFetcher.fetchCredits(
+                cookieHeader: cookieHeader,
+                csrfToken: csrfToken,
+                timeout: timeout,
+                transport: transport)
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
+                throw CancellationError()
+            }
+            return nil
+        }
+    }
+
+    static func fetchOptionalVibeUsage(
+        csrfToken: String,
+        cookieHeader: String? = nil,
+        timeout: TimeInterval,
+        transport: ProviderHTTPTransport = ProviderHTTPClient.shared) async throws
+        -> MistralUsageFetcher.MistralVibeUsageResult?
+    {
+        do {
+            return try await MistralUsageFetcher.fetchVibeUsage(
+                csrfToken: csrfToken,
+                cookieHeader: cookieHeader,
+                timeout: timeout,
+                transport: transport)
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled || Task.isCancelled {
+                throw CancellationError()
+            }
+            return nil
+        }
+    }
+
+    static func attachVibeWindow(
+        to usageSnapshot: UsageSnapshot,
+        vibeResult: MistralUsageFetcher.MistralVibeUsageResult?) -> UsageSnapshot
+    {
+        guard let vibeResult else { return usageSnapshot }
+        let window = RateWindow(
+            usedPercent: vibeResult.usagePercentage,
+            windowMinutes: nil,
+            resetsAt: vibeResult.resetAt,
+            resetDescription: nil)
+        let named = NamedRateWindow(id: "mistral-monthly-plan", title: "Monthly Plan", window: window)
+        let existing = usageSnapshot.extraRateWindows?.filter { $0.id != named.id } ?? []
+        return usageSnapshot.with(extraRateWindows: existing + [named])
     }
 
     func shouldFallback(on _: Error, context _: ProviderFetchContext) -> Bool {

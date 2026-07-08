@@ -14,7 +14,10 @@ struct StatusItemIconObservationSignatureTests {
         settings.statusChecksEnabled = true
         settings.refreshFrequency = .manual
         settings.menuBarShowsBrandIconWithPercent = false
+        settings.menuBarShowsHighestUsage = false
         settings.mergeIcons = true
+        settings.mergedMenuLastSelectedWasOverview = false
+        settings.selectedMenuProvider = .codex
 
         let registry = ProviderRegistry.shared
         if let codexMeta = registry.metadata[.codex] {
@@ -88,6 +91,7 @@ struct StatusItemIconObservationSignatureTests {
         let registry = ProviderRegistry.shared
         let claudeMetadata = try #require(registry.metadata[.claude])
         settings.setProviderEnabled(provider: .claude, metadata: claudeMetadata, enabled: true)
+        settings.selectedMenuProvider = .codex
         store._setSnapshotForTesting(
             Self.makeSnapshot(provider: .claude, email: "claude@example.com"),
             provider: .claude)
@@ -120,6 +124,33 @@ struct StatusItemIconObservationSignatureTests {
                 primaryUsedPercent: 42,
                 secondaryUsedPercent: 63),
             provider: .codex)
+
+        #expect(controller.storeIconObservationSignature() != baseline)
+    }
+
+    @Test
+    func `store icon observation signature tracks selected copilot budget`() throws {
+        let (settings, store, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-copilot-budget")
+        defer { controller.releaseStatusItemsForTesting() }
+
+        let registry = ProviderRegistry.shared
+        let codexMetadata = try #require(registry.metadata[.codex])
+        let copilotMetadata = try #require(registry.metadata[.copilot])
+        settings.setProviderEnabled(provider: .codex, metadata: codexMetadata, enabled: false)
+        settings.setProviderEnabled(provider: .copilot, metadata: copilotMetadata, enabled: true)
+        settings.selectedMenuProvider = .copilot
+        settings.copilotBudgetExtrasEnabled = true
+        settings.copilotIconSecondaryWindowID = "copilot-budget-agent"
+
+        store._setSnapshotForTesting(
+            Self.makeCopilotSnapshot(budgetUsedPercent: 25),
+            provider: .copilot)
+        let baseline = controller.storeIconObservationSignature()
+
+        store._setSnapshotForTesting(
+            Self.makeCopilotSnapshot(budgetUsedPercent: 75),
+            provider: .copilot)
 
         #expect(controller.storeIconObservationSignature() != baseline)
     }
@@ -160,7 +191,7 @@ struct StatusItemIconObservationSignatureTests {
     }
 
     @Test
-    func `merged store icon observation signature changes when non primary status changes`() throws {
+    func `merged store icon observation signature ignores non primary status changes`() throws {
         let (settings, store, controller) = self.makeController(
             suiteName: "StatusItemIconObservationSignatureTests-merged-secondary-status")
         defer { controller.releaseStatusItemsForTesting() }
@@ -175,7 +206,7 @@ struct StatusItemIconObservationSignatureTests {
             description: "Claude status issue",
             updatedAt: Date(timeIntervalSince1970: 20))
 
-        #expect(controller.storeIconObservationSignature() != baseline)
+        #expect(controller.storeIconObservationSignature() == baseline)
     }
 
     @Test
@@ -196,6 +227,45 @@ struct StatusItemIconObservationSignatureTests {
             updatedAt: Date(timeIntervalSince1970: 20))
 
         #expect(controller.storeIconObservationSignature() != baseline)
+    }
+
+    @Test
+    func `store icon observation signature changes when hide critters toggles`() {
+        let (settings, _, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-hide-critters")
+        defer { controller.releaseStatusItemsForTesting() }
+
+        settings.menuBarHidesCritters = false
+        let baseline = controller.storeIconObservationSignature()
+
+        settings.menuBarHidesCritters = true
+
+        #expect(controller.storeIconObservationSignature() != baseline)
+    }
+
+    @Test
+    func `updateIcons reuses a precomputed store icon signature instead of recomputing it`() {
+        let (_, _, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-precomputed-reuse")
+        defer { controller.releaseStatusItemsForTesting() }
+
+        let precomputed = "precomputed-store-icon-signature-sentinel"
+        controller.updateIcons(precomputedStoreIconSignature: precomputed)
+
+        // A supplied signature must be stored verbatim; if updateIcons recomputed it, the gate would
+        // never equal the sentinel value.
+        #expect(controller.lastObservedStoreIconWorkSignature == precomputed)
+    }
+
+    @Test
+    func `updateIcons recomputes the store icon signature when none is provided`() {
+        let (_, _, controller) = self.makeController(
+            suiteName: "StatusItemIconObservationSignatureTests-recompute-default")
+        defer { controller.releaseStatusItemsForTesting() }
+
+        controller.updateIcons()
+
+        #expect(controller.lastObservedStoreIconWorkSignature == controller.storeIconObservationSignature())
     }
 
     private static func makeSnapshot(
@@ -223,5 +293,35 @@ struct StatusItemIconObservationSignatureTests {
                 accountEmail: email,
                 accountOrganization: nil,
                 loginMethod: "plus"))
+    }
+
+    private static func makeCopilotSnapshot(budgetUsedPercent: Double) -> UsageSnapshot {
+        UsageSnapshot(
+            primary: RateWindow(
+                usedPercent: 10,
+                windowMinutes: nil,
+                resetsAt: nil,
+                resetDescription: nil),
+            secondary: RateWindow(
+                usedPercent: 20,
+                windowMinutes: nil,
+                resetsAt: nil,
+                resetDescription: nil),
+            extraRateWindows: [
+                NamedRateWindow(
+                    id: "copilot-budget-agent",
+                    title: "Budget - Copilot Agent Premium Requests",
+                    window: RateWindow(
+                        usedPercent: budgetUsedPercent,
+                        windowMinutes: nil,
+                        resetsAt: nil,
+                        resetDescription: nil)),
+            ],
+            updatedAt: Date(timeIntervalSince1970: 100),
+            identity: ProviderIdentitySnapshot(
+                providerID: .copilot,
+                accountEmail: "copilot@example.com",
+                accountOrganization: nil,
+                loginMethod: "individual"))
     }
 }

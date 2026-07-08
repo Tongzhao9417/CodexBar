@@ -1,4 +1,11 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 
 public struct KiroUsageSnapshot: Sendable {
     public let planName: String
@@ -219,55 +226,77 @@ public enum KiroStatusProbeError: LocalizedError, Sendable {
 }
 
 public struct KiroStatusProbe: Sendable {
-    public init() {}
+    private let cliBinaryResolver: @Sendable () -> String?
+    private let accountProbeTimeout: TimeInterval
+
+    public init() {
+        self.cliBinaryResolver = { TTYCommandRunner.which("kiro-cli") }
+        self.accountProbeTimeout = 3.0
+    }
+
+    init(cliBinaryResolver: @escaping @Sendable () -> String?, accountProbeTimeout: TimeInterval = 3.0) {
+        self.cliBinaryResolver = cliBinaryResolver
+        self.accountProbeTimeout = accountProbeTimeout
+    }
 
     private static let logger = CodexBarLog.logger(LogCategories.kiro)
 
     public static func detectVersion() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["kiro-cli", "--version"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else { return nil }
-            // Output is like "kiro-cli 1.23.1"
-            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("kiro-cli ") {
-                return String(trimmed.dropFirst("kiro-cli ".count))
-            }
-            return trimmed.isEmpty ? nil : trimmed
-        } catch {
-            self.logger.debug("kiro-cli version detection failed: \(error.localizedDescription)")
+        guard let path = TTYCommandRunner.which("kiro-cli"),
+              let output = ProviderVersionDetector.run(
+                  path: path,
+                  args: ["--version"],
+                  mergeStandardError: true)
+        else {
+            self.logger.debug("kiro-cli version detection failed")
             return nil
         }
+        // Output is like "kiro-cli 1.23.1"
+        if output.hasPrefix("kiro-cli ") {
+            return String(output.dropFirst("kiro-cli ".count))
+        }
+        return output
     }
 
     public func fetch() async throws -> KiroUsageSnapshot {
-        let account = try await self.ensureLoggedIn()
-        let output = try await self.runUsageCommand()
+        let accountTask = Task { await self.fetchAccountStatus() }
+
+        let output: String
+        do {
+            output = try await self.runUsageCommand()
+        } catch is CancellationError {
+            accountTask.cancel()
+            _ = await accountTask.value
+            throw CancellationError()
+        } catch {
+            if try await self.awaitAccountStatus(accountTask) == .notLoggedIn {
+                throw KiroStatusProbeError.notLoggedIn
+            }
+            throw error
+        }
+
         var contextUsage: KiroContextUsageSnapshot?
         do {
             contextUsage = try await self.fetchContextUsage()
+        } catch is CancellationError {
+            accountTask.cancel()
+            _ = await accountTask.value
+            throw CancellationError()
         } catch {
             Self.logger.debug("Kiro context usage probe failed: \(error.localizedDescription)")
         }
-        return try self.parse(
-            output: output,
-            accountEmail: account.email,
-            authMethod: account.authMethod,
-            contextUsage: contextUsage)
-    }
 
-    private struct KiroCLIResult {
-        let stdout: String
-        let stderr: String
-        let terminationStatus: Int32
-        let terminatedForIdle: Bool
+        let accountStatus = try await self.awaitAccountStatus(accountTask)
+        let accountInfo = accountStatus.account
+        do {
+            return try self.parse(
+                output: output,
+                accountEmail: accountInfo?.email,
+                authMethod: accountInfo?.authMethod,
+                contextUsage: contextUsage)
+        } catch KiroStatusProbeError.parseError where accountStatus == .notLoggedIn {
+            throw KiroStatusProbeError.notLoggedIn
+        }
     }
 
     struct KiroAccountInfo: Equatable {
@@ -275,21 +304,63 @@ public struct KiroStatusProbe: Sendable {
         let email: String?
     }
 
+    private enum KiroAccountProbeStatus: Equatable {
+        case account(KiroAccountInfo)
+        case notLoggedIn
+        case unavailable
+
+        var account: KiroAccountInfo? {
+            guard case let .account(info) = self else { return nil }
+            return info
+        }
+    }
+
+    private func fetchAccountStatus() async -> KiroAccountProbeStatus {
+        do {
+            return try await .account(self.ensureLoggedIn())
+        } catch KiroStatusProbeError.notLoggedIn {
+            return .notLoggedIn
+        } catch {
+            Self.logger.debug("Kiro account probe failed: \(error.localizedDescription)")
+            return .unavailable
+        }
+    }
+
+    private func awaitAccountStatus(
+        _ task: Task<KiroAccountProbeStatus, Never>) async throws -> KiroAccountProbeStatus
+    {
+        let status = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        try Task.checkCancellation()
+        return status
+    }
+
     private func ensureLoggedIn() async throws -> KiroAccountInfo {
-        let result = try await self.runCommand(arguments: ["whoami"], timeout: 5.0)
+        let result = try self.runViaPTY(
+            arguments: ["whoami"],
+            timeout: self.accountProbeTimeout,
+            idleTimeout: 1.5)
+        guard case let .processExited(status) = result.completion else {
+            if Self.isWhoAmILoginRequired(result.text) {
+                throw KiroStatusProbeError.notLoggedIn
+            }
+            throw KiroStatusProbeError.timeout
+        }
         return try self.validateWhoAmIOutput(
-            stdout: result.stdout,
-            stderr: result.stderr,
-            terminationStatus: result.terminationStatus)
+            stdout: result.text,
+            stderr: "",
+            terminationStatus: status)
     }
 
     func validateWhoAmIOutput(stdout: String, stderr: String, terminationStatus: Int32) throws -> KiroAccountInfo {
         let trimmedStdout = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedStderr = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         let combined = trimmedStderr.isEmpty ? trimmedStdout : trimmedStderr
-        let lowered = combined.lowercased()
 
-        if lowered.contains("not logged in") || lowered.contains("login required") {
+        if Self.isWhoAmILoginRequired(combined) {
             throw KiroStatusProbeError.notLoggedIn
         }
 
@@ -305,6 +376,11 @@ public struct KiroStatusProbe: Sendable {
         }
 
         return self.parseWhoAmIOutput(combined)
+    }
+
+    private static func isWhoAmILoginRequired(_ output: String) -> Bool {
+        let lowered = Self.stripANSI(output).lowercased()
+        return lowered.contains("not logged in") || lowered.contains("login required")
     }
 
     func parseWhoAmIOutput(_ output: String) -> KiroAccountInfo {
@@ -339,14 +415,12 @@ public struct KiroStatusProbe: Sendable {
     }
 
     private func runUsageCommand() async throws -> String {
-        let result = try await self.runCommand(
+        let result = try self.runViaPTY(
             arguments: ["chat", "--no-interactive", "/usage"],
             timeout: 20.0,
-            idleTimeout: 10.0)
-        let trimmedStdout = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedStderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        let combinedOutput = trimmedStderr.isEmpty ? trimmedStdout : trimmedStderr
-        let combinedStripped = Self.stripANSI(combinedOutput).lowercased()
+            idleTimeout: 4.0)
+        let output = result.text
+        let combinedStripped = Self.stripANSI(output).lowercased()
 
         if combinedStripped.contains("not logged in")
             || combinedStripped.contains("login required")
@@ -357,181 +431,70 @@ public struct KiroStatusProbe: Sendable {
             throw KiroStatusProbeError.notLoggedIn
         }
 
-        if result.terminatedForIdle, !Self.isUsageOutputComplete(combinedOutput) {
-            throw KiroStatusProbeError.timeout
-        }
-
-        if !trimmedStdout.isEmpty {
-            return result.stdout
-        }
-
-        if !trimmedStderr.isEmpty {
-            return result.stderr
-        }
-
-        if result.terminationStatus != 0 {
-            let message = combinedOutput.isEmpty
-                ? "Kiro CLI failed with status \(result.terminationStatus)."
-                : combinedOutput
-            throw KiroStatusProbeError.cliFailed(message)
-        }
-
-        return result.stdout
+        try Self.validatePTYCompletion(
+            result,
+            command: "usage",
+            allowIdleOutput: Self.isUsageOutputComplete(output))
+        return output
     }
 
     private func fetchContextUsage() async throws -> KiroContextUsageSnapshot? {
-        let result = try await self.runCommand(
+        let result = try self.runViaPTY(
             arguments: ["chat", "--no-interactive", "/context"],
             timeout: 8.0,
             idleTimeout: 3.0)
-        let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? result.stderr
-            : result.stdout
-        return self.parseContextUsage(output: output)
+        try Self.validatePTYCompletion(result, command: "context", allowIdleOutput: true)
+        return self.parseContextUsage(output: result.text)
     }
 
-    private func runCommand(
+    /// Runs `kiro-cli` through a pseudo-terminal. The CLI (forked from Amazon Q Developer CLI)
+    /// performs terminal setup on startup and produces no output at all when launched without a
+    /// controlling terminal, so a plain pipe-backed launch hangs until it is killed. Routing every
+    /// invocation through a PTY (as the Codex/Claude probes do) is what makes it emit output.
+    private func runViaPTY(
         arguments: [String],
         timeout: TimeInterval,
-        idleTimeout: TimeInterval = 5.0) async throws -> KiroCLIResult
+        idleTimeout: TimeInterval) throws -> TTYCommandRunner.Result
     {
-        guard let binary = TTYCommandRunner.which("kiro-cli") else {
+        guard let binary = self.cliBinaryResolver() else {
             throw KiroStatusProbeError.cliNotFound
         }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = arguments
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        process.standardInput = FileHandle.nullDevice
-
-        var env = ProcessInfo.processInfo.environment
-        env["TERM"] = "xterm-256color"
-        process.environment = env
-
-        // Thread-safe state for activity tracking
-        final class ActivityState: @unchecked Sendable {
-            private let lock = NSLock()
-            private var _lastActivityAt = Date()
-            private var _hasReceivedOutput = false
-            private var _stdoutData = Data()
-            private var _stderrData = Data()
-
-            var lastActivityAt: Date {
-                self.lock.lock()
-                defer { lock.unlock() }
-                return self._lastActivityAt
-            }
-
-            var hasReceivedOutput: Bool {
-                self.lock.lock()
-                defer { lock.unlock() }
-                return self._hasReceivedOutput
-            }
-
-            func appendStdout(_ data: Data) {
-                self.lock.lock()
-                defer { lock.unlock() }
-                self._stdoutData.append(data)
-                self._lastActivityAt = Date()
-                self._hasReceivedOutput = true
-            }
-
-            func appendStderr(_ data: Data) {
-                self.lock.lock()
-                defer { lock.unlock() }
-                self._stderrData.append(data)
-                self._lastActivityAt = Date()
-                self._hasReceivedOutput = true
-            }
-
-            func getOutput() -> (stdout: Data, stderr: Data) {
-                self.lock.lock()
-                defer { lock.unlock() }
-                return (self._stdoutData, self._stderrData)
-            }
+        do {
+            return try TTYCommandRunner().run(
+                binary: binary,
+                send: "",
+                options: TTYCommandRunner.Options(
+                    rows: 50,
+                    cols: 200,
+                    timeout: timeout,
+                    idleTimeout: idleTimeout,
+                    extraArgs: arguments,
+                    returnOnEmptyProcessExit: true))
+        } catch TTYCommandRunner.Error.binaryNotFound {
+            throw KiroStatusProbeError.cliNotFound
+        } catch TTYCommandRunner.Error.timedOut {
+            throw KiroStatusProbeError.timeout
+        } catch let TTYCommandRunner.Error.launchFailed(message) {
+            throw KiroStatusProbeError.cliFailed(message)
         }
+    }
 
-        let state = ActivityState()
-
-        // Set up readability handlers to track activity
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                state.appendStdout(data)
+    private static func validatePTYCompletion(
+        _ result: TTYCommandRunner.Result,
+        command: String,
+        allowIdleOutput: Bool) throws
+    {
+        switch result.completion {
+        case let .processExited(status):
+            guard status == 0 else {
+                let message = Self.stripANSI(result.text).trimmingCharacters(in: .whitespacesAndNewlines)
+                throw KiroStatusProbeError.cliFailed(
+                    message.isEmpty ? "Kiro CLI \(command) failed with status \(status)." : message)
             }
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                state.appendStderr(data)
-            }
-        }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
-                do {
-                    try process.run()
-                } catch {
-                    stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                    stderrPipe.fileHandleForReading.readabilityHandler = nil
-                    continuation.resume(throwing: error)
-                    return
-                }
-
-                let deadline = Date().addingTimeInterval(timeout)
-                var didHitDeadline = false
-                var didTerminateForIdle = false
-
-                while process.isRunning {
-                    if Date() >= deadline {
-                        didHitDeadline = true
-                        break
-                    }
-                    // Idle timeout: if we got output but then it went silent
-                    if state.hasReceivedOutput,
-                       Date().timeIntervalSince(state.lastActivityAt) >= idleTimeout
-                    {
-                        // Process went idle after producing output - likely done or stuck
-                        didTerminateForIdle = true
-                        break
-                    }
-                    Thread.sleep(forTimeInterval: 0.1)
-                }
-
-                // Clean up handlers
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-
-                if process.isRunning {
-                    process.terminate()
-                    process.waitUntilExit()
-                    if didHitDeadline || !state.hasReceivedOutput {
-                        continuation.resume(throwing: KiroStatusProbeError.timeout)
-                        return
-                    }
-                }
-
-                // Read any remaining data
-                let remainingStdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let remainingStderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-                var output = state.getOutput()
-                output.stdout.append(remainingStdout)
-                output.stderr.append(remainingStderr)
-
-                let stdoutOutput = String(data: output.stdout, encoding: .utf8) ?? ""
-                let stderrOutput = String(data: output.stderr, encoding: .utf8) ?? ""
-                continuation.resume(returning: KiroCLIResult(
-                    stdout: stdoutOutput,
-                    stderr: stderrOutput,
-                    terminationStatus: process.terminationStatus,
-                    terminatedForIdle: didTerminateForIdle))
-            }
+        case .idleTimeout:
+            guard allowIdleOutput else { throw KiroStatusProbeError.timeout }
+        case .outputCondition, .deadlineExceeded:
+            throw KiroStatusProbeError.timeout
         }
     }
 
@@ -707,14 +670,15 @@ public struct KiroStatusProbe: Sendable {
         var matchedNewFormat = false
 
         // Parse plan name from "| KIRO FREE" or similar (legacy format)
-        if let planMatch = text.range(of: #"\|\s*(KIRO\s+\w+)"#, options: .regularExpression) {
+        // Horizontal whitespace only ([ \t]) so the match cannot bridge a newline into the next line.
+        if let planMatch = text.range(of: #"\|[ \t]*(KIRO[ \t]+\w+)"#, options: .regularExpression) {
             let raw = String(text[planMatch]).replacingOccurrences(of: "|", with: "")
             planName = raw.trimmingCharacters(in: .whitespaces)
         }
 
         // Parse plan name from "Estimated Usage | resets on 2026-06-01 | KIRO FREE" (kiro-cli 2.x)
         if let estimatedMatch = text.range(
-            of: #"Estimated Usage\s*\|[^\n|]*\|\s*([A-Z][A-Z0-9 ]+)"#,
+            of: #"Estimated Usage[ \t]*\|[^\n|]*\|[ \t]*([A-Z][A-Z0-9 ]+)"#,
             options: .regularExpression)
         {
             let line = String(text[estimatedMatch])
@@ -726,7 +690,7 @@ public struct KiroStatusProbe: Sendable {
         }
 
         // Parse plan name from "Plan: Q Developer Pro" (new format, kiro-cli 1.24+)
-        if let newPlanMatch = text.range(of: #"Plan:\s*(.+)"#, options: .regularExpression) {
+        if let newPlanMatch = text.range(of: #"Plan:[ \t]*(.+)"#, options: .regularExpression) {
             let line = String(text[newPlanMatch])
             let planLine = line.replacingOccurrences(of: "Plan:", with: "").trimmingCharacters(in: .whitespaces)
             if let firstLine = planLine.split(separator: "\n").first {

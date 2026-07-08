@@ -4,6 +4,97 @@ import SweetCookieKit
 import FoundationNetworking
 #endif
 
+enum ClaudeWebHTTPTransport {
+    #if DEBUG
+    @TaskLocal static var overrideForTesting: (any ProviderHTTPTransport)?
+    #endif
+
+    static var current: any ProviderHTTPTransport {
+        #if DEBUG
+        if let override = self.overrideForTesting {
+            return override
+        }
+        #endif
+        return ProviderHTTPClient.shared
+    }
+}
+
+enum ClaudeWebSessionKeyImport {
+    #if DEBUG
+    @TaskLocal static var overrideForTesting: ClaudeWebAPIFetcher.SessionKeyInfo?
+    #endif
+
+    static var currentOverride: ClaudeWebAPIFetcher.SessionKeyInfo? {
+        #if DEBUG
+        self.overrideForTesting
+        #else
+        nil
+        #endif
+    }
+}
+
+private actor ClaudeWebBrowserFetchGate {
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
+
+    private var ownerID: UUID?
+    private var waiters: [Waiter] = []
+
+    func acquire(id: UUID) async -> Bool {
+        if Task.isCancelled { return false }
+        guard self.ownerID != nil else {
+            self.ownerID = id
+            return true
+        }
+        return await withCheckedContinuation { continuation in
+            self.waiters.append(Waiter(id: id, continuation: continuation))
+        }
+    }
+
+    func cancel(id: UUID) {
+        if self.ownerID == id { return }
+        guard let index = self.waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = self.waiters.remove(at: index)
+        waiter.continuation.resume(returning: false)
+    }
+
+    func release(id: UUID) {
+        guard self.ownerID == id else { return }
+        guard !self.waiters.isEmpty else {
+            self.ownerID = nil
+            return
+        }
+        let waiter = self.waiters.removeFirst()
+        self.ownerID = waiter.id
+        waiter.continuation.resume(returning: true)
+    }
+}
+
+private enum ClaudeWebBrowserFetchSerialization {
+    private static let gate = ClaudeWebBrowserFetchGate()
+
+    static func run<T>(_ operation: () async throws -> T) async throws -> T {
+        let id = UUID()
+        let acquired = await withTaskCancellationHandler {
+            await self.gate.acquire(id: id)
+        } onCancel: {
+            Task { await self.gate.cancel(id: id) }
+        }
+        guard acquired else { throw CancellationError() }
+        do {
+            try Task.checkCancellation()
+            let value = try await operation()
+            await self.gate.release(id: id)
+            return value
+        } catch {
+            await self.gate.release(id: id)
+            throw error
+        }
+    }
+}
+
 /// Fetches Claude usage data directly from the claude.ai API using browser session cookies.
 ///
 /// This approach mirrors what Claude Usage Tracker does, but automatically extracts the session key
@@ -69,7 +160,7 @@ public enum ClaudeWebAPIFetcher {
             case .invalidResponse:
                 "Invalid response from Claude API."
             case .unauthorized:
-                "Unauthorized. Your Claude session may have expired."
+                "Sign in to claude.ai (or refresh Claude cookies) to load usage data."
             case let .serverError(code):
                 "Claude API error: HTTP \(code)"
             case .noOrganization:
@@ -92,6 +183,12 @@ public enum ClaudeWebAPIFetcher {
         public let accountOrganization: String?
         public let accountEmail: String?
         public let loginMethod: String?
+        /// Whether the API reported a `five_hour` session object. When `false` (the API sent
+        /// `five_hour: null`, as enterprise/credit accounts with no live session do), `sessionPercentUsed`
+        /// is the synthesized `0` placeholder rather than a real reading. Distinguishing this from a real
+        /// session that happens to be at `0%` (with or without a reset) lets lane classifiers drop the
+        /// placeholder without hiding a genuine empty session.
+        public let hasLiveSessionWindow: Bool
 
         public init(
             sessionPercentUsed: Double,
@@ -103,7 +200,8 @@ public enum ClaudeWebAPIFetcher {
             extraUsageCost: ProviderCostSnapshot?,
             accountOrganization: String?,
             accountEmail: String?,
-            loginMethod: String?)
+            loginMethod: String?,
+            hasLiveSessionWindow: Bool = true)
         {
             self.sessionPercentUsed = sessionPercentUsed
             self.sessionResetsAt = sessionResetsAt
@@ -115,6 +213,7 @@ public enum ClaudeWebAPIFetcher {
             self.accountOrganization = accountOrganization
             self.accountEmail = accountEmail
             self.loginMethod = loginMethod
+            self.hasLiveSessionWindow = hasLiveSessionWindow
         }
     }
 
@@ -140,41 +239,12 @@ public enum ClaudeWebAPIFetcher {
         targetOrganizationID: String? = nil,
         logger: ((String) -> Void)? = nil) async throws -> WebUsageData
     {
-        let log: (String) -> Void = { msg in logger?("[claude-web] \(msg)") }
-
-        if let cached = CookieHeaderCache.load(provider: .claude),
-           !cached.cookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
-            log("Using cached cookie header from \(cached.sourceLabel)")
-            do {
-                return try await self.fetchUsage(
-                    cookieHeader: cached.cookieHeader,
-                    targetOrganizationID: targetOrganizationID,
-                    logger: log)
-            } catch let error as FetchError {
-                switch error {
-                case .unauthorized, .noSessionKeyFound, .invalidSessionKey:
-                    CookieHeaderCache.clear(provider: .claude)
-                default:
-                    throw error
-                }
-            } catch {
-                throw error
-            }
+        try await ClaudeWebBrowserFetchSerialization.run {
+            try await self.fetchUsageSerialized(
+                browserDetection: browserDetection,
+                targetOrganizationID: targetOrganizationID,
+                logger: logger)
         }
-
-        let sessionInfo = try extractSessionKeyInfo(browserDetection: browserDetection, logger: log)
-        log("Found session key (\(sessionInfo.cookieCount) cookies)")
-
-        let usage = try await self.fetchUsage(
-            using: sessionInfo,
-            targetOrganizationID: targetOrganizationID,
-            logger: log)
-        CookieHeaderCache.store(
-            provider: .claude,
-            cookieHeader: "sessionKey=\(sessionInfo.key)",
-            sourceLabel: sessionInfo.sourceLabel)
-        return usage
     }
 
     public static func fetchUsage(
@@ -196,23 +266,60 @@ public enum ClaudeWebAPIFetcher {
         targetOrganizationID: String? = nil,
         logger: ((String) -> Void)? = nil) async throws -> WebUsageData
     {
+        try await self.fetchUsage(
+            using: sessionKeyInfo,
+            targetOrganizationID: targetOrganizationID,
+            logger: logger,
+            cacheSourceLabel: nil,
+            expectedCacheObservation: .authoritative(nil))
+    }
+
+    private static func fetchUsageAndRenewCache(
+        cachedEntry: CookieHeaderCache.Entry,
+        targetOrganizationID: String?,
+        logger: ((String) -> Void)? = nil) async throws -> WebUsageData
+    {
+        let sessionInfo = try self.sessionKeyInfo(cookieHeader: cachedEntry.cookieHeader)
+        return try await self.fetchUsage(
+            using: sessionInfo,
+            targetOrganizationID: targetOrganizationID,
+            logger: logger,
+            cacheSourceLabel: cachedEntry.sourceLabel,
+            expectedCacheObservation: .authoritative(cachedEntry))
+    }
+
+    private static func fetchUsage(
+        using sessionKeyInfo: SessionKeyInfo,
+        targetOrganizationID: String?,
+        logger: ((String) -> Void)?,
+        cacheSourceLabel: String?,
+        expectedCacheObservation: CookieHeaderCache.ConditionalMutationObservation,
+        persistInitialSessionKey: Bool = false) async throws -> WebUsageData
+    {
         let log: (String) -> Void = { msg in logger?(msg) }
         let sessionKey = sessionKeyInfo.key
+        let renewalTracker = ClaudeWebSessionKeyRenewalTracker(initialSessionKey: sessionKey)
 
         // Fetch organization info
         let organization = try await fetchOrganizationInfo(
             sessionKey: sessionKey,
             targetOrganizationID: targetOrganizationID,
-            logger: log)
+            logger: log,
+            renewalTracker: renewalTracker)
         log("Organization resolved")
 
-        var usage = try await fetchUsageData(orgId: organization.id, sessionKey: sessionKey, logger: log)
+        var usage = try await fetchUsageData(
+            orgId: organization.id,
+            sessionKey: renewalTracker.sessionKey,
+            logger: log,
+            renewalTracker: renewalTracker)
         if usage.extraUsageCost == nil,
            let extra = await ClaudeWebExtraUsageCost.fetch(
                baseURL: Self.baseURL,
                orgId: organization.id,
-               sessionKey: sessionKey,
-               logger: log)
+               sessionKey: renewalTracker.sessionKey,
+               logger: log,
+               renewalTracker: renewalTracker)
         {
             usage = WebUsageData(
                 sessionPercentUsed: usage.sessionPercentUsed,
@@ -224,9 +331,15 @@ public enum ClaudeWebAPIFetcher {
                 extraUsageCost: extra,
                 accountOrganization: usage.accountOrganization,
                 accountEmail: usage.accountEmail,
-                loginMethod: usage.loginMethod)
+                loginMethod: usage.loginMethod,
+                hasLiveSessionWindow: usage.hasLiveSessionWindow)
         }
-        if let account = await fetchAccountInfo(sessionKey: sessionKey, orgId: organization.id, logger: log) {
+        if let account = await fetchAccountInfo(
+            sessionKey: renewalTracker.sessionKey,
+            orgId: organization.id,
+            logger: log,
+            renewalTracker: renewalTracker)
+        {
             usage = WebUsageData(
                 sessionPercentUsed: usage.sessionPercentUsed,
                 sessionResetsAt: usage.sessionResetsAt,
@@ -237,7 +350,8 @@ public enum ClaudeWebAPIFetcher {
                 extraUsageCost: usage.extraUsageCost,
                 accountOrganization: usage.accountOrganization,
                 accountEmail: account.email,
-                loginMethod: account.loginMethod)
+                loginMethod: account.loginMethod,
+                hasLiveSessionWindow: usage.hasLiveSessionWindow)
         }
         if usage.accountOrganization == nil, let name = organization.name {
             usage = WebUsageData(
@@ -250,7 +364,16 @@ public enum ClaudeWebAPIFetcher {
                 extraUsageCost: usage.extraUsageCost,
                 accountOrganization: name,
                 accountEmail: usage.accountEmail,
-                loginMethod: usage.loginMethod)
+                loginMethod: usage.loginMethod,
+                hasLiveSessionWindow: usage.hasLiveSessionWindow)
+        }
+        if let cacheSourceLabel {
+            self.persistSessionKeyIfNeeded(
+                source: (sessionKey, cacheSourceLabel),
+                renewedCookieHeader: renewalTracker.renewedCookieHeader,
+                expectedCacheObservation: expectedCacheObservation,
+                persistInitialSessionKey: persistInitialSessionKey,
+                logger: log)
         }
         return usage
     }
@@ -292,7 +415,7 @@ public enum ClaudeWebAPIFetcher {
             request.timeoutInterval = 20
 
             do {
-                let (data, response) = try await ProviderHTTPClient.shared.data(for: request)
+                let (data, response) = try await ClaudeWebHTTPTransport.current.data(for: request)
                 let http = response as? HTTPURLResponse
                 let contentType = http?.allHeaderFields["Content-Type"] as? String
                 let truncated = data.prefix(Self.maxProbeBytes)
@@ -370,6 +493,7 @@ public enum ClaudeWebAPIFetcher {
         browserDetection: BrowserDetection,
         logger: ((String) -> Void)? = nil) throws -> SessionKeyInfo
     {
+        if let override = ClaudeWebSessionKeyImport.currentOverride { return override }
         let log: (String) -> Void = { msg in logger?(msg) }
 
         let cookieDomains = ["claude.ai"]
@@ -419,7 +543,8 @@ public enum ClaudeWebAPIFetcher {
     private static func fetchOrganizationInfo(
         sessionKey: String,
         targetOrganizationID: String? = nil,
-        logger: ((String) -> Void)? = nil) async throws -> OrganizationInfo
+        logger: ((String) -> Void)? = nil,
+        renewalTracker: ClaudeWebSessionKeyRenewalTracker? = nil) async throws -> OrganizationInfo
     {
         let url = URL(string: "\(baseURL)/organizations")!
         var request = URLRequest(url: url)
@@ -428,11 +553,12 @@ public enum ClaudeWebAPIFetcher {
         request.httpMethod = "GET"
         request.timeoutInterval = 15
 
-        let (data, response) = try await ProviderHTTPClient.shared.data(for: request)
+        let (data, response) = try await ClaudeWebHTTPTransport.current.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw FetchError.invalidResponse
         }
+        renewalTracker?.observe(response: httpResponse)
 
         logger?("Organizations API status: \(httpResponse.statusCode)")
 
@@ -449,7 +575,8 @@ public enum ClaudeWebAPIFetcher {
     private static func fetchUsageData(
         orgId: String,
         sessionKey: String,
-        logger: ((String) -> Void)? = nil) async throws -> WebUsageData
+        logger: ((String) -> Void)? = nil,
+        renewalTracker: ClaudeWebSessionKeyRenewalTracker? = nil) async throws -> WebUsageData
     {
         let url = URL(string: "\(baseURL)/organizations/\(orgId)/usage")!
         var request = URLRequest(url: url)
@@ -458,11 +585,12 @@ public enum ClaudeWebAPIFetcher {
         request.httpMethod = "GET"
         request.timeoutInterval = 15
 
-        let (data, response) = try await ProviderHTTPClient.shared.data(for: request)
+        let (data, response) = try await ClaudeWebHTTPTransport.current.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw FetchError.invalidResponse
         }
+        renewalTracker?.observe(response: httpResponse)
 
         logger?("Usage API status: \(httpResponse.statusCode)")
 
@@ -484,24 +612,24 @@ public enum ClaudeWebAPIFetcher {
         // Parse five_hour (session) usage
         var sessionPercent: Double?
         var sessionResets: Date?
-        if let fiveHour = json["five_hour"] as? [String: Any] {
-            if let utilization = fiveHour["utilization"] as? Int {
-                sessionPercent = Double(utilization)
-            }
+        let fiveHour = json["five_hour"] as? [String: Any]
+        if let fiveHour {
+            sessionPercent = Self.percentValue(from: fiveHour["utilization"])
             if let resetsAt = fiveHour["resets_at"] as? String {
                 sessionResets = self.parseISO8601Date(resetsAt)
             }
         }
         // Enterprise/credit-based accounts return null for five_hour; treat as 0% rather than an error.
+        // Track the object's presence so a real 0% session (with or without a reset) is not mistaken for
+        // the synthesized null-session placeholder downstream.
         let resolvedSessionPercent = sessionPercent ?? 0.0
+        let hasLiveSessionWindow = fiveHour != nil
 
         // Parse seven_day (weekly) usage
         var weeklyPercent: Double?
         var weeklyResets: Date?
         if let sevenDay = json["seven_day"] as? [String: Any] {
-            if let utilization = sevenDay["utilization"] as? Int {
-                weeklyPercent = Double(utilization)
-            }
+            weeklyPercent = Self.percentValue(from: sevenDay["utilization"])
             if let resetsAt = sevenDay["resets_at"] as? String {
                 weeklyResets = self.parseISO8601Date(resetsAt)
             }
@@ -530,7 +658,8 @@ public enum ClaudeWebAPIFetcher {
             extraUsageCost: extraUsageCost,
             accountOrganization: nil,
             accountEmail: nil,
-            loginMethod: nil)
+            loginMethod: nil,
+            hasLiveSessionWindow: hasLiveSessionWindow)
     }
 
     private static func percentValue(from value: Any?) -> Double? {
@@ -649,7 +778,8 @@ public enum ClaudeWebAPIFetcher {
     private static func fetchAccountInfo(
         sessionKey: String,
         orgId: String?,
-        logger: ((String) -> Void)? = nil) async -> WebAccountInfo?
+        logger: ((String) -> Void)? = nil,
+        renewalTracker: ClaudeWebSessionKeyRenewalTracker? = nil) async -> WebAccountInfo?
     {
         let url = URL(string: "\(baseURL)/account")!
         var request = URLRequest(url: url)
@@ -659,8 +789,9 @@ public enum ClaudeWebAPIFetcher {
         request.timeoutInterval = 15
 
         do {
-            let (data, response) = try await ProviderHTTPClient.shared.data(for: request)
+            let (data, response) = try await ClaudeWebHTTPTransport.current.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else { return nil }
+            renewalTracker?.observe(response: httpResponse)
             logger?("Account API status: \(httpResponse.statusCode)")
             guard httpResponse.statusCode == 200 else { return nil }
             return Self.parseAccountInfo(data, orgId: orgId)
@@ -873,6 +1004,104 @@ public enum ClaudeWebAPIFetcher {
     #endif
 }
 
+extension ClaudeWebAPIFetcher {
+    private static func persistSessionKeyIfNeeded(
+        source: (initialSessionKey: String, label: String),
+        renewedCookieHeader: String?,
+        expectedCacheObservation: CookieHeaderCache.ConditionalMutationObservation,
+        persistInitialSessionKey: Bool,
+        logger: (String) -> Void)
+    {
+        let importedCookieHeader = persistInitialSessionKey ? "sessionKey=\(source.initialSessionKey)" : nil
+        guard let cookieHeader = renewedCookieHeader ?? importedCookieHeader else { return }
+        let stored = CookieHeaderCache.storeIfObservationCurrent(
+            provider: .claude,
+            expected: expectedCacheObservation,
+            cookieHeader: cookieHeader,
+            sourceLabel: source.label)
+        if renewedCookieHeader != nil {
+            logger(stored ? "Stored renewed Claude session key" : "Skipped renewal because the cache changed")
+        }
+    }
+}
+
+private final class ClaudeWebSessionKeyRenewalTracker: @unchecked Sendable {
+    private let initialSessionKey: String
+    private let lock = NSLock()
+    private var currentSessionKey: String
+
+    init(initialSessionKey: String) {
+        self.initialSessionKey = initialSessionKey
+        self.currentSessionKey = initialSessionKey
+    }
+
+    var sessionKey: String {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.currentSessionKey
+    }
+
+    var renewedCookieHeader: String? {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        guard self.currentSessionKey != self.initialSessionKey else { return nil }
+        return "sessionKey=\(self.currentSessionKey)"
+    }
+
+    func observe(response: HTTPURLResponse) {
+        guard response.statusCode == 200,
+              let sessionKey = Self.sessionKey(fromSetCookieHeaders: response.allHeaderFields)
+        else {
+            return
+        }
+        self.lock.lock()
+        self.currentSessionKey = sessionKey
+        self.lock.unlock()
+    }
+
+    private static func sessionKey(fromSetCookieHeaders fields: [AnyHashable: Any]) -> String? {
+        guard let value = fields.first(where: {
+            String(describing: $0.key).caseInsensitiveCompare("Set-Cookie") == .orderedSame
+        })?.value else {
+            return nil
+        }
+        var latestSessionKey: String?
+        for header in self.setCookieHeaderValues(from: value) {
+            latestSessionKey = self.sessionKey(fromSetCookieHeader: header) ?? latestSessionKey
+        }
+        return latestSessionKey
+    }
+
+    private static func setCookieHeaderValues(from value: Any) -> [String] {
+        if let values = value as? [String] {
+            return values
+        }
+        if let values = value as? [Any] {
+            return values.map { String(describing: $0) }
+        }
+        return [String(describing: value)]
+    }
+
+    private static func sessionKey(fromSetCookieHeader header: String) -> String? {
+        let pattern = #"(?i)(?:^|[,\r\n])\s*sessionKey=([^;,\r\n]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(header.startIndex..<header.endIndex, in: header)
+        var latestSessionKey: String?
+        for match in regex.matches(in: header, range: range) {
+            guard match.numberOfRanges >= 2,
+                  let valueRange = Range(match.range(at: 1), in: header)
+            else {
+                continue
+            }
+            let value = String(header[valueRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.hasPrefix("sk-ant-") {
+                latestSessionKey = value
+            }
+        }
+        return latestSessionKey
+    }
+}
+
 private enum ClaudeWebExtraUsageCost {
     // MARK: - Extra usage cost (Claude "Extra")
 
@@ -908,7 +1137,8 @@ private enum ClaudeWebExtraUsageCost {
         baseURL: String,
         orgId: String,
         sessionKey: String,
-        logger: ((String) -> Void)? = nil) async -> ProviderCostSnapshot?
+        logger: ((String) -> Void)? = nil,
+        renewalTracker: ClaudeWebSessionKeyRenewalTracker? = nil) async -> ProviderCostSnapshot?
     {
         let url = URL(string: "\(baseURL)/organizations/\(orgId)/overage_spend_limit")!
         var request = URLRequest(url: url)
@@ -918,8 +1148,9 @@ private enum ClaudeWebExtraUsageCost {
         request.timeoutInterval = 15
 
         do {
-            let (data, response) = try await ProviderHTTPClient.shared.data(for: request)
+            let (data, response) = try await ClaudeWebHTTPTransport.current.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else { return nil }
+            renewalTracker?.observe(response: httpResponse)
             logger?("Overage API status: \(httpResponse.statusCode)")
             guard httpResponse.statusCode == 200 else { return nil }
             return Self.parseOverageSpendLimit(data)
@@ -972,6 +1203,52 @@ private enum ClaudeWebExtraUsageCost {
         }
     }
 }
+
+#if os(macOS)
+extension ClaudeWebAPIFetcher {
+    fileprivate static func fetchUsageSerialized(
+        browserDetection: BrowserDetection,
+        targetOrganizationID: String?,
+        logger: ((String) -> Void)?) async throws -> WebUsageData
+    {
+        let log: (String) -> Void = { msg in logger?("[claude-web] \(msg)") }
+        var cacheObservation = CookieHeaderCache.observeForConditionalMutation(provider: .claude)
+
+        if let cached = cacheObservation.entry,
+           !cached.cookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            log("Using cached cookie header from \(cached.sourceLabel)")
+            do {
+                return try await self.fetchUsageAndRenewCache(
+                    cachedEntry: cached,
+                    targetOrganizationID: targetOrganizationID,
+                    logger: log)
+            } catch let error as FetchError {
+                switch error {
+                case .unauthorized, .noSessionKeyFound, .invalidSessionKey:
+                    let cleared = CookieHeaderCache.clearIfCurrent(provider: .claude, expected: cached)
+                    cacheObservation = .authoritative(cleared ? nil : cached)
+                default:
+                    throw error
+                }
+            } catch {
+                throw error
+            }
+        }
+
+        let sessionInfo = try extractSessionKeyInfo(browserDetection: browserDetection, logger: log)
+        log("Found session key (\(sessionInfo.cookieCount) cookies)")
+
+        return try await self.fetchUsage(
+            using: sessionInfo,
+            targetOrganizationID: targetOrganizationID,
+            logger: log,
+            cacheSourceLabel: sessionInfo.sourceLabel,
+            expectedCacheObservation: cacheObservation,
+            persistInitialSessionKey: true)
+    }
+}
+#endif
 
 private struct ClaudeWebOrganizationResponse: Decodable {
     let uuid: String

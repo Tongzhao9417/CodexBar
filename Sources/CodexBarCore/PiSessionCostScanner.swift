@@ -1,5 +1,20 @@
 import Foundation
 
+private final class PiSessionISO8601FormatterBox: @unchecked Sendable {
+    let lock = NSLock()
+    let withFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    let plain: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+}
+
 enum PiSessionCostScanner {
     struct Options {
         var piSessionsRoot: URL?
@@ -46,6 +61,9 @@ enum PiSessionCostScanner {
     private static let costScale = 1_000_000_000.0
     private static let maxLineBytes = 16 * 1024 * 1024
     private static let maxSafeRoundedInt = Double(Int.max) - 1
+    private static let sessionStartFilenameRegex = try? NSRegularExpression(
+        pattern: "^(\\d{4}-\\d{2}-\\d{2})T(\\d{2})-(\\d{2})-(\\d{2})-(\\d{3})Z_")
+    private static let isoFormatterBox = PiSessionISO8601FormatterBox()
 
     static func loadDailyReport(
         provider: UsageProvider,
@@ -384,6 +402,7 @@ enum PiSessionCostScanner {
                             provider: identity.provider,
                             modelName: identity.modelName,
                             message: message,
+                            pricingDate: date,
                             pricingContext: pricingContext)
                         add(provider: identity.provider, dayKey: dayKey, modelName: identity.modelName, usage: usage)
                     }
@@ -524,6 +543,7 @@ enum PiSessionCostScanner {
         provider: UsageProvider,
         modelName: String,
         message: [String: Any],
+        pricingDate: Date? = nil,
         pricingContext: ModelsDevPricingContext? = nil) -> PiPackedUsage
     {
         let usage = (message["usage"] as? [String: Any]) ?? [:]
@@ -571,10 +591,12 @@ enum PiSessionCostScanner {
             cacheWriteTokens: cacheWrite,
             outputTokens: output,
             totalTokens: totalTokens)
+        // Pi JSONL does not record Anthropic cache retention, so use Pi's persisted default tariff.
         let costUSD = self.computedCostUSD(
             provider: provider,
             modelName: modelName,
             usage: rawUsage,
+            pricingDate: pricingDate,
             pricingContext: pricingContext)
         let costNanos = costUSD.map { Int64(($0 * self.costScale).rounded()) } ?? 0
 
@@ -593,10 +615,13 @@ enum PiSessionCostScanner {
         provider: UsageProvider,
         modelName: String,
         usage: PiPackedUsage,
+        pricingDate: Date? = nil,
         pricingContext: ModelsDevPricingContext? = nil) -> Double?
     {
         switch provider {
         case .codex:
+            // Pi records input, cache reads, and cache writes as disjoint counts. Codex pricing
+            // expects cached input to be a subset of total input, so reconstruct that total here.
             CostUsagePricing.codexCostUSD(
                 model: modelName,
                 inputTokens: usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
@@ -611,6 +636,7 @@ enum PiSessionCostScanner {
                 cacheReadInputTokens: usage.cacheReadTokens,
                 cacheCreationInputTokens: usage.cacheWriteTokens,
                 outputTokens: usage.outputTokens,
+                pricingDate: pricingDate,
                 modelsDevCatalog: pricingContext?.catalog,
                 modelsDevCacheRoot: pricingContext?.cacheRoot)
         default:
@@ -634,7 +660,9 @@ enum PiSessionCostScanner {
         }
         return 0
     }
+}
 
+extension PiSessionCostScanner {
     private static func mappedProvider(fromPiProvider provider: String) -> UsageProvider? {
         switch provider.lowercased() {
         case "openai-codex":
@@ -811,8 +839,7 @@ enum PiSessionCostScanner {
     }
 
     private static func parseSessionStartFromFilename(_ filename: String) -> Date? {
-        let pattern = "^(\\d{4}-\\d{2}-\\d{2})T(\\d{2})-(\\d{2})-(\\d{2})-(\\d{3})Z_"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        guard let regex = self.sessionStartFilenameRegex else { return nil }
         let range = NSRange(filename.startIndex..<filename.endIndex, in: filename)
         guard let match = regex.firstMatch(in: filename, range: range) else { return nil }
         guard (1...5).allSatisfy({ Range(match.range(at: $0), in: filename) != nil }) else { return nil }
@@ -825,14 +852,10 @@ enum PiSessionCostScanner {
     }
 
     private static func parseISO(_ text: String) -> Date? {
-        let withFractional = ISO8601DateFormatter()
-        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = withFractional.date(from: text) {
-            return date
-        }
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return plain.date(from: text)
+        self.isoFormatterBox.lock.lock()
+        defer { self.isoFormatterBox.lock.unlock() }
+        return self.isoFormatterBox.withFractional.date(from: text)
+            ?? self.isoFormatterBox.plain.date(from: text)
     }
 
     private static func localMidnight(_ date: Date) -> Date {

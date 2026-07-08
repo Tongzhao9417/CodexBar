@@ -18,6 +18,16 @@ extension SettingsStore {
             .path
     }
 
+    private static func normalizedCodexProfileHomePaths(_ paths: [String]?) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for path in (paths ?? []).compactMap({ CodexHomeScope.normalizedHomePath($0) }) {
+            guard seen.insert(path).inserted else { continue }
+            result.append(path)
+        }
+        return result
+    }
+
     private func loadManagedCodexAccounts() throws -> ManagedCodexAccountSet {
         #if DEBUG
         if CodexManagedRemoteHomeTestingOverride.isUnreadable(for: self) {
@@ -82,6 +92,23 @@ extension SettingsStore {
         return path
     }
 
+    var codexProfileHomePaths: [String] {
+        Self.normalizedCodexProfileHomePaths(
+            self.configSnapshot.providerConfig(for: .codex)?.codexProfileHomePaths)
+    }
+
+    func profileCodexHomePath(forActiveSource source: CodexActiveSource) -> String? {
+        guard case let .profileHome(path) = source else {
+            return nil
+        }
+        guard let normalizedPath = CodexHomeScope.normalizedHomePath(path),
+              self.codexProfileHomePaths.contains(normalizedPath)
+        else {
+            return nil
+        }
+        return normalizedPath
+    }
+
     func managedCodexRemoteHomePath(forActiveSource source: CodexActiveSource) -> String? {
         guard case let .managedAccount(id) = source else {
             return nil
@@ -141,6 +168,7 @@ extension SettingsStore {
         }
         set {
             self.invalidateCodexAccountReconciliationSnapshotCache()
+            self.cachedCodexAccountMenuProjection = nil
             self.updateProviderConfig(provider: .codex) { entry in
                 entry.codexActiveSource = newValue
             }
@@ -166,6 +194,7 @@ extension SettingsStore {
     @discardableResult
     func refreshCodexAccountReconciliationAfterManagedAccountsDidChange() -> Bool {
         self.invalidateCodexAccountReconciliationSnapshotCache()
+        self.cachedCodexAccountMenuProjection = nil
         return self.persistResolvedCodexActiveSourceCorrectionIfNeeded()
     }
 
@@ -210,6 +239,7 @@ extension SettingsStore {
 
     func invalidateCodexAccountReconciliationSnapshotCache() {
         self.cachedCodexAccountReconciliationSnapshot = nil
+        self.codexAccountReconciliationGeneration &+= 1
     }
 
     var codexAccountReconciliationSnapshot: CodexAccountReconciliationSnapshot {
@@ -230,14 +260,82 @@ extension SettingsStore {
             return cached.snapshot
         }
 
-        let snapshot = self.codexAccountReconciler(activeSource: activeSource).loadSnapshot()
+        let snapshot = self.codexAccountSnapshotLoader(activeSource: activeSource)()
+        let loadedAt = Date()
         if cacheInterval > 0 {
+            self.cachedCodexAccountReconciliationSnapshot = CachedCodexAccountReconciliationSnapshot(
+                activeSource: activeSource,
+                loadedAt: loadedAt,
+                snapshot: snapshot)
+        }
+        if activeSource == self.codexPersistedActiveSource {
+            self.cachedCodexAccountMenuProjection = CachedCodexAccountMenuProjection(
+                activeSource: activeSource,
+                loadedAt: loadedAt,
+                projection: CodexVisibleAccountProjection.make(from: snapshot))
+        }
+        return snapshot
+    }
+
+    /// Menu rendering must stay side-effect free: no `auth.json` reads, JWT parsing, or fingerprint hashing.
+    var codexVisibleAccountProjectionForMenuDisplay: CodexVisibleAccountProjection? {
+        let activeSource = self.codexPersistedActiveSource
+        guard let cached = self.cachedCodexAccountMenuProjection,
+              cached.activeSource == activeSource
+        else {
+            return nil
+        }
+        return cached.projection
+    }
+
+    var codexAccountMenuProjectionNeedsRevalidation: Bool {
+        let activeSource = self.codexPersistedActiveSource
+        guard let cached = self.cachedCodexAccountMenuProjection,
+              cached.activeSource == activeSource
+        else {
+            return true
+        }
+        return Date().timeIntervalSince(cached.loadedAt) >= Self.codexAccountReconciliationSnapshotCacheInterval
+    }
+
+    func revalidateCodexAccountMenuProjection() async -> CodexAccountMenuProjectionRevalidationResult {
+        guard self.codexAccountMenuProjectionNeedsRevalidation else { return .skipped }
+
+        let activeSource = self.codexPersistedActiveSource
+        let generation = self.codexAccountReconciliationGeneration
+        let loader = self.codexAccountSnapshotLoader(activeSource: activeSource)
+        let snapshot = await Self.loadCodexAccountSnapshot(loader)
+
+        guard generation == self.codexAccountReconciliationGeneration,
+              activeSource == self.codexPersistedActiveSource
+        else {
+            return .discarded
+        }
+
+        let now = Date()
+        let projection = CodexVisibleAccountProjection.make(from: snapshot)
+        let previousProjection = self.cachedCodexAccountMenuProjection.flatMap { cached in
+            cached.activeSource == activeSource ? cached.projection : nil
+        }
+        self.cachedCodexAccountMenuProjection = CachedCodexAccountMenuProjection(
+            activeSource: activeSource,
+            loadedAt: now,
+            projection: projection)
+        if Self.codexAccountReconciliationSnapshotCacheInterval > 0 {
             self.cachedCodexAccountReconciliationSnapshot = CachedCodexAccountReconciliationSnapshot(
                 activeSource: activeSource,
                 loadedAt: now,
                 snapshot: snapshot)
         }
-        return snapshot
+        return previousProjection == projection ? .unchanged : .updated
+    }
+
+    @concurrent
+    private nonisolated static func loadCodexAccountSnapshot(
+        _ loader: @escaping @Sendable () -> CodexAccountReconciliationSnapshot)
+        async -> CodexAccountReconciliationSnapshot
+    {
+        loader()
     }
 
     var codexVisibleAccountProjection: CodexVisibleAccountProjection {
@@ -257,11 +355,8 @@ extension SettingsStore {
     }
 
     func selectDisplayedCodexVisibleAccount(_ account: CodexVisibleAccount) {
-        if self.selectCodexVisibleAccount(id: account.id) {
-            return
-        }
-        // An open menu can preserve a previously rendered account row while the live projection is briefly incomplete.
-        self.invalidateCodexAccountReconciliationSnapshotCache()
+        // The row already carries the exact source it represented. Re-resolving its ID would synchronously
+        // reload auth state from the menu click callback and can also fail after a stale snapshot is rendered.
         self.codexActiveSource = account.selectionSource
     }
 
@@ -283,6 +378,18 @@ extension SettingsStore {
         self.codexVisibleAccountProjection.source(forVisibleAccountID: id)
     }
 
+    private func codexAccountSnapshotLoader(
+        activeSource: CodexActiveSource) -> @Sendable () -> CodexAccountReconciliationSnapshot
+    {
+        #if DEBUG
+        if let loader = self._test_codexAccountSnapshotLoader {
+            return { loader(activeSource) }
+        }
+        #endif
+        let reconciler = self.codexAccountReconciler(activeSource: activeSource)
+        return { reconciler.loadSnapshot() }
+    }
+
     private func codexAccountReconciler(activeSource: CodexActiveSource) -> DefaultCodexAccountReconciler {
         let baseEnvironment = self.codexReconciliationEnvironment()
         #if DEBUG
@@ -296,6 +403,7 @@ extension SettingsStore {
             return DefaultCodexAccountReconciler(
                 activeSource: activeSource,
                 baseEnvironment: baseEnvironment,
+                profileHomePaths: self.codexProfileHomePaths,
                 managedEnvironmentBuilder: { environment, account in
                     CodexHomeScope.scopedEnvironment(base: environment, codexHome: account.managedHomePath)
                 })
@@ -326,6 +434,7 @@ extension SettingsStore {
                 usesInjectedEnvironment: reconciliationEnvironmentOverride != nil),
             activeSource: activeSource,
             baseEnvironment: baseEnvironment,
+            profileHomePaths: self.codexProfileHomePaths,
             managedEnvironmentBuilder: { environment, account in
                 CodexHomeScope.scopedEnvironment(base: environment, codexHome: account.managedHomePath)
             })
@@ -333,6 +442,7 @@ extension SettingsStore {
         return DefaultCodexAccountReconciler(
             activeSource: activeSource,
             baseEnvironment: baseEnvironment,
+            profileHomePaths: self.codexProfileHomePaths,
             managedEnvironmentBuilder: { environment, account in
                 CodexHomeScope.scopedEnvironment(base: environment, codexHome: account.managedHomePath)
             })
@@ -518,10 +628,15 @@ private struct CodexManagedRemoteHomeTestingSystemObserver: CodexSystemAccountOb
 }
 
 extension SettingsStore {
+    private func invalidateCodexAccountReconciliationCachesForTesting() {
+        self.invalidateCodexAccountReconciliationSnapshotCache()
+        self.cachedCodexAccountMenuProjection = nil
+    }
+
     var _test_activeManagedCodexRemoteHomePath: String? {
         get { CodexManagedRemoteHomeTestingOverride.homePath(for: self) }
         set {
-            self.invalidateCodexAccountReconciliationSnapshotCache()
+            self.invalidateCodexAccountReconciliationCachesForTesting()
             CodexManagedRemoteHomeTestingOverride.setHomePath(newValue, for: self)
         }
     }
@@ -529,7 +644,7 @@ extension SettingsStore {
     var _test_activeManagedCodexAccount: ManagedCodexAccount? {
         get { CodexManagedRemoteHomeTestingOverride.account(for: self) }
         set {
-            self.invalidateCodexAccountReconciliationSnapshotCache()
+            self.invalidateCodexAccountReconciliationCachesForTesting()
             CodexManagedRemoteHomeTestingOverride.setAccount(newValue, for: self)
         }
     }
@@ -537,7 +652,7 @@ extension SettingsStore {
     var _test_unreadableManagedCodexAccountStore: Bool {
         get { CodexManagedRemoteHomeTestingOverride.isUnreadable(for: self) }
         set {
-            self.invalidateCodexAccountReconciliationSnapshotCache()
+            self.invalidateCodexAccountReconciliationCachesForTesting()
             CodexManagedRemoteHomeTestingOverride.setUnreadable(newValue, for: self)
         }
     }
@@ -545,7 +660,7 @@ extension SettingsStore {
     var _test_managedCodexAccountStoreURL: URL? {
         get { CodexManagedRemoteHomeTestingOverride.managedStoreURL(for: self) }
         set {
-            self.invalidateCodexAccountReconciliationSnapshotCache()
+            self.invalidateCodexAccountReconciliationCachesForTesting()
             CodexManagedRemoteHomeTestingOverride.setManagedStoreURL(newValue, for: self)
         }
     }
@@ -553,7 +668,7 @@ extension SettingsStore {
     var _test_liveSystemCodexAccount: ObservedSystemCodexAccount? {
         get { CodexManagedRemoteHomeTestingOverride.liveSystemAccount(for: self) }
         set {
-            self.invalidateCodexAccountReconciliationSnapshotCache()
+            self.invalidateCodexAccountReconciliationCachesForTesting()
             CodexManagedRemoteHomeTestingOverride.setLiveSystemAccount(newValue, for: self)
         }
     }
@@ -561,7 +676,7 @@ extension SettingsStore {
     var _test_codexReconciliationEnvironment: [String: String]? {
         get { CodexManagedRemoteHomeTestingOverride.reconciliationEnvironment(for: self) }
         set {
-            self.invalidateCodexAccountReconciliationSnapshotCache()
+            self.invalidateCodexAccountReconciliationCachesForTesting()
             CodexManagedRemoteHomeTestingOverride.setReconciliationEnvironment(newValue, for: self)
         }
     }

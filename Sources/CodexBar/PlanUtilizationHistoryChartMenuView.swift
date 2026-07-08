@@ -64,8 +64,9 @@ struct PlanUtilizationHistoryChartMenuView: View {
     }
 
     private let provider: UsageProvider
-    private let histories: [PlanUtilizationSeriesHistory]
-    private let snapshot: UsageSnapshot?
+    private let visibleSeries: [VisibleSeries]
+    private let modelsBySeriesID: [String: Model]
+    private let emptyModel: Model
     private let width: CGFloat
 
     @State private var selectedSeriesID: String?
@@ -78,32 +79,33 @@ struct PlanUtilizationHistoryChartMenuView: View {
         width: CGFloat)
     {
         self.provider = provider
-        self.histories = histories
-        self.snapshot = snapshot
+        let visibleSeries = Self.visibleSeries(
+            histories: histories,
+            provider: provider,
+            snapshot: snapshot)
+        let referenceDate = Date()
+        self.visibleSeries = visibleSeries
+        self.modelsBySeriesID = Dictionary(uniqueKeysWithValues: visibleSeries.map {
+            ($0.id, Self.makeModel(history: $0.history, provider: provider, referenceDate: referenceDate))
+        })
+        self.emptyModel = Self.emptyModel(provider: provider)
         self.width = width
     }
 
     var body: some View {
-        let visibleSeries = Self.visibleSeries(
-            histories: self.histories,
-            provider: self.provider,
-            snapshot: self.snapshot)
-        let effectiveSelectedSeries = visibleSeries.first(where: { $0.id == self.selectedSeriesID }) ?? visibleSeries
-            .first
-        let model = Self.makeModel(
-            history: effectiveSelectedSeries?.history,
-            provider: self.provider,
-            referenceDate: Date())
+        let effectiveSelectedSeries = self.visibleSeries.first(where: { $0.id == self.selectedSeriesID })
+            ?? self.visibleSeries.first
+        let model = effectiveSelectedSeries.flatMap { self.modelsBySeriesID[$0.id] } ?? self.emptyModel
 
         VStack(alignment: .leading, spacing: 10) {
-            if visibleSeries.count > 1 {
+            if self.visibleSeries.count > 1 {
                 Picker(selection: Binding(
                     get: { effectiveSelectedSeries?.id ?? "" },
                     set: { newValue in
                         self.selectedSeriesID = newValue
                         self.selectedPointID = nil
                     })) {
-                        ForEach(visibleSeries) { series in
+                        ForEach(self.visibleSeries) { series in
                             Text(series.title).tag(series.id)
                         }
                     } label: {
@@ -172,9 +174,9 @@ struct PlanUtilizationHistoryChartMenuView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(minWidth: self.width, maxWidth: .infinity, alignment: .topLeading)
-        .task(id: visibleSeries.map(\.id).joined(separator: ",")) {
-            guard let firstVisibleSeries = visibleSeries.first else { return }
-            guard !visibleSeries.contains(where: { $0.id == self.selectedSeriesID }) else { return }
+        .task(id: self.visibleSeries.map(\.id).joined(separator: ",")) {
+            guard let firstVisibleSeries = self.visibleSeries.first else { return }
+            guard !self.visibleSeries.contains(where: { $0.id == self.selectedSeriesID }) else { return }
             self.selectedSeriesID = firstVisibleSeries.id
             self.selectedPointID = nil
         }
@@ -228,12 +230,12 @@ struct PlanUtilizationHistoryChartMenuView: View {
             }
     }
 
-    private nonisolated static func mergedEntries(
+    nonisolated static func mergedEntries(
         _ entries: [PlanUtilizationHistoryEntry]) -> [PlanUtilizationHistoryEntry]
     {
-        entries.reduce(into: []) { result, entry in
-            guard !result.contains(entry) else { return }
-            result.append(entry)
+        var seen: Set<PlanUtilizationHistoryEntry> = []
+        return entries.filter { entry in
+            seen.insert(entry).inserted
         }
     }
 
@@ -244,18 +246,23 @@ struct PlanUtilizationHistoryChartMenuView: View {
         guard let snapshot else { return nil }
 
         var names: Set<PlanUtilizationSeriesName> = []
-        if snapshot.primary != nil {
-            names.insert(.session)
-        }
-        if snapshot.secondary != nil {
+        switch provider {
+        case .codex:
+            if snapshot.primary != nil { names.insert(.session) }
+            if snapshot.secondary != nil { names.insert(.weekly) }
+        case .claude:
+            if snapshot.primary != nil { names.insert(.session) }
+            if snapshot.secondary != nil { names.insert(.weekly) }
+            if snapshot.tertiary != nil,
+               ProviderDescriptorRegistry.metadata[provider]?.supportsOpus == true
+            {
+                names.insert(.opus)
+            }
+        default:
+            let windows = [snapshot.primary, snapshot.secondary, snapshot.tertiary].compactMap(\.self)
+                + (snapshot.extraRateWindows?.filter(\.usageKnown).map(\.window) ?? [])
+            guard windows.contains(where: { $0.windowMinutes == 7 * 24 * 60 }) else { return nil }
             names.insert(.weekly)
-        }
-
-        if provider == .claude,
-           snapshot.tertiary != nil,
-           ProviderDescriptorRegistry.metadata[provider]?.supportsOpus == true
-        {
-            names.insert(.opus)
         }
 
         return names
@@ -791,6 +798,18 @@ struct PlanUtilizationHistoryChartMenuView: View {
             } else {
                 best = (point.id, distance)
             }
+        }
+
+        // Stay on the last selected bar when cursor is in the gap between bars; only switch
+        // selection when the cursor is over the bar's own visual body.
+        if let best, let bestPoint = model.pointsByID[best.id],
+           let barX = proxy.position(forX: Double(bestPoint.index))
+        {
+            guard ChartBarHoverSelection.accepts(
+                distanceFromBarCenter: abs(location.x - (plotFrame.origin.x + barX)),
+                barHalfWidth: Layout.barWidth / 2,
+                selectableCount: model.points.count)
+            else { return }
         }
 
         if self.selectedPointID != best?.id {

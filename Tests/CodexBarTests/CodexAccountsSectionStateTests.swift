@@ -24,6 +24,7 @@ struct CodexAccountsSectionStateTests {
             hasUnreadableManagedAccountStore: false,
             isAuthenticatingManagedAccount: false,
             authenticatingManagedAccountID: nil,
+            isImportingManagedAccount: false,
             isRemovingManagedAccount: false,
             isAuthenticatingLiveAccount: false,
             isPromotingSystemAccount: false,
@@ -60,6 +61,7 @@ struct CodexAccountsSectionStateTests {
             hasUnreadableManagedAccountStore: false,
             isAuthenticatingManagedAccount: false,
             authenticatingManagedAccountID: nil,
+            isImportingManagedAccount: false,
             isRemovingManagedAccount: false,
             isAuthenticatingLiveAccount: false,
             isPromotingSystemAccount: false,
@@ -97,6 +99,7 @@ struct CodexAccountsSectionStateTests {
             hasUnreadableManagedAccountStore: false,
             isAuthenticatingManagedAccount: false,
             authenticatingManagedAccountID: nil,
+            isImportingManagedAccount: false,
             isRemovingManagedAccount: true,
             isAuthenticatingLiveAccount: false,
             isPromotingSystemAccount: false,
@@ -125,6 +128,7 @@ struct CodexAccountsSectionStateTests {
             hasUnreadableManagedAccountStore: false,
             isAuthenticatingManagedAccount: false,
             authenticatingManagedAccountID: nil,
+            isImportingManagedAccount: false,
             isRemovingManagedAccount: false,
             isAuthenticatingLiveAccount: false,
             isPromotingSystemAccount: false,
@@ -154,6 +158,7 @@ struct CodexAccountsSectionStateTests {
             hasUnreadableManagedAccountStore: false,
             isAuthenticatingManagedAccount: false,
             authenticatingManagedAccountID: nil,
+            isImportingManagedAccount: false,
             isRemovingManagedAccount: true,
             isAuthenticatingLiveAccount: false,
             isPromotingSystemAccount: false,
@@ -183,6 +188,7 @@ struct CodexAccountsSectionStateTests {
             hasUnreadableManagedAccountStore: false,
             isAuthenticatingManagedAccount: false,
             authenticatingManagedAccountID: nil,
+            isImportingManagedAccount: false,
             isRemovingManagedAccount: false,
             isAuthenticatingLiveAccount: false,
             isPromotingSystemAccount: true,
@@ -191,5 +197,38 @@ struct CodexAccountsSectionStateTests {
         #expect(state.canAddAccount == false)
         #expect(state.canReauthenticate(managedAccount) == false)
         #expect(state.canRemove(managedAccount) == false)
+    }
+
+    @Test
+    func `import in flight blocks account mutations`() {
+        let managedAccountID = UUID()
+        let managedAccount = CodexVisibleAccount(
+            id: "managed:\(managedAccountID.uuidString.lowercased())",
+            email: "managed@example.com",
+            storedAccountID: managedAccountID,
+            selectionSource: .managedAccount(id: managedAccountID),
+            isActive: true,
+            isLive: false,
+            canReauthenticate: true,
+            canRemove: true)
+        let state = CodexAccountsSectionState(
+            visibleAccounts: [managedAccount],
+            activeVisibleAccountID: managedAccount.id,
+            liveVisibleAccountID: nil,
+            hasUnreadableManagedAccountStore: false,
+            isAuthenticatingManagedAccount: false,
+            authenticatingManagedAccountID: nil,
+            isImportingManagedAccount: true,
+            isRemovingManagedAccount: false,
+            isAuthenticatingLiveAccount: false,
+            isPromotingSystemAccount: false,
+            notice: nil)
+
+        #expect(state.canAddAccount == false)
+        #expect(state.canImportAccount == false)
+        #expect(state.canReauthenticate(managedAccount) == false)
+        #expect(state.canRemove(managedAccount) == false)
+        #expect(state.isSystemSelectionDisabled)
+        #expect(state.importAccountTitle == "Importing JSON…")
     }
 }

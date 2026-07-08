@@ -1,10 +1,8 @@
 import AppKit
 import CodexBarCore
-import CodexBarMacroSupport
 import Foundation
 import SwiftUI
 
-@ProviderImplementationRegistration
 struct ZaiProviderImplementation: ProviderImplementation {
     let id: UsageProvider = .zai
 
@@ -21,8 +19,7 @@ struct ZaiProviderImplementation: ProviderImplementation {
 
     @MainActor
     func settingsSnapshot(context: ProviderSettingsSnapshotContext) -> ProviderSettingsSnapshotContribution? {
-        _ = context
-        return .zai(context.settings.zaiSettingsSnapshot())
+        .zai(context.settings.zaiSettingsSnapshot(tokenOverride: context.tokenOverride))
     }
 
     @MainActor
@@ -44,7 +41,6 @@ struct ZaiProviderImplementation: ProviderImplementation {
         let options = ZaiAPIRegion.allCases.map {
             ProviderSettingsPickerOption(id: $0.rawValue, title: $0.displayName)
         }
-
         return [
             ProviderSettingsPickerDescriptor(
                 id: "zai-api-region",
@@ -58,8 +54,7 @@ struct ZaiProviderImplementation: ProviderImplementation {
     }
 
     @MainActor
-    func settingsFields(context: ProviderSettingsContext) -> [ProviderSettingsFieldDescriptor] {
-        _ = context
-        return []
+    func settingsFields(context _: ProviderSettingsContext) -> [ProviderSettingsFieldDescriptor] {
+        []
     }
 }

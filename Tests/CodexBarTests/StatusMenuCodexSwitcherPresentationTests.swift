@@ -209,6 +209,33 @@ struct StatusMenuCodexSwitcherPresentationTests {
     }
 
     @Test
+    func `codex stacked menu does not truncate imported accounts at token account snapshot limit`() {
+        let settings = self.makeSettings()
+        let store = UsageStore(
+            fetcher: UsageFetcher(),
+            browserDetection: BrowserDetection(cacheTTL: 0),
+            settings: settings)
+        let accounts = (0..<8).map { index in
+            CodexVisibleAccount(
+                id: "managed-\(index)@example.com",
+                email: "managed-\(index)@example.com",
+                storedAccountID: UUID(),
+                selectionSource: .managedAccount(id: UUID()),
+                isActive: index == 7,
+                isLive: false,
+                canReauthenticate: true,
+                canRemove: true)
+        }
+
+        let visibleAccounts = store.limitedCodexVisibleAccounts(
+            accounts,
+            activeVisibleAccountID: accounts.last?.id)
+
+        #expect(visibleAccounts.count == 8)
+        #expect(Set(visibleAccounts.map(\.id)) == Set(accounts.map(\.id)))
+    }
+
+    @Test
     func `codex stacked menu surfaces account health labels`() throws {
         self.disableMenuCardsForTesting()
         let settings = self.makeSettings()

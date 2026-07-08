@@ -110,7 +110,12 @@ final class OpenAIDashboardWebViewCache {
     private var entries: [ObjectIdentifier: Entry] = [:]
     /// Keep the WebView alive only long enough for immediate retries/menu reopens.
     /// Long-lived hidden ChatGPT tabs still consume noticeable energy on some setups.
-    private let idleTimeout: TimeInterval = 60
+    private let idleTimeout: TimeInterval
+    private var idlePruneWorkItem: DispatchWorkItem?
+    private var idlePruneGeneration = 0
+    #if DEBUG
+    private(set) var idlePruneDeadlineForTesting: Date?
+    #endif
     /// Reuse the validated analytics page only for the immediate next handoff.
     private let preservedPageHandoffTimeout: TimeInterval = 5
     private let blankURL = URL(string: "about:blank")!
@@ -153,26 +158,43 @@ final class OpenAIDashboardWebViewCache {
     })();
     """
 
+    init(idleTimeout: TimeInterval = 60) {
+        self.idleTimeout = idleTimeout
+    }
+
+    nonisolated static func remainingNavigationTimeout(
+        until deadline: Date,
+        now: Date = Date()) throws -> TimeInterval
+    {
+        let remaining = deadline.timeIntervalSince(now)
+        guard remaining > 0 else { throw URLError(.timedOut) }
+        return remaining
+    }
+
     private func releaseCachedEntry(_ entry: Entry, preserveLoadedPage: Bool) {
         entry.isBusy = false
-        entry.lastUsedAt = Date()
+        let now = Date()
+        entry.lastUsedAt = now
         self.updatePreservedPageState(for: entry, preserveLoadedPage: preserveLoadedPage)
         self.prepareCachedWebViewForIdle(
             entry.webView,
             host: entry.host,
             preserveLoadedPage: preserveLoadedPage)
-        self.prune(now: Date())
+        self.prune(now: now)
+        self.scheduleNextIdlePrune(now: now)
     }
 
     private func releaseNewEntry(_ entry: Entry, webView: WKWebView, preserveLoadedPage: Bool) {
         entry.isBusy = false
-        entry.lastUsedAt = Date()
+        let now = Date()
+        entry.lastUsedAt = now
         self.updatePreservedPageState(for: entry, preserveLoadedPage: preserveLoadedPage)
         self.prepareCachedWebViewForIdle(
             webView,
             host: entry.host,
             preserveLoadedPage: preserveLoadedPage)
-        self.prune(now: Date())
+        self.prune(now: now)
+        self.scheduleNextIdlePrune(now: now)
     }
 
     // MARK: - Testing support
@@ -248,6 +270,7 @@ final class OpenAIDashboardWebViewCache {
 
     /// Clear all cached entries (for test isolation).
     func clearAllForTesting() {
+        self.cancelIdlePrune()
         for (_, entry) in self.entries {
             entry.clearPreservedPage()
             entry.host.close()
@@ -268,7 +291,7 @@ final class OpenAIDashboardWebViewCache {
         allowTimeoutRetry: Bool = true,
         preserveLoadedPageOnRelease: Bool = false) async throws -> OpenAIDashboardWebViewLease
     {
-        let deadline = Date().addingTimeInterval(max(navigationTimeout, 1))
+        let deadline = Date().addingTimeInterval(max(navigationTimeout, 0.01))
         return try await self.acquire(
             websiteDataStore: websiteDataStore,
             usageURL: usageURL,
@@ -293,7 +316,7 @@ final class OpenAIDashboardWebViewCache {
             logger?("[webview] \(message)")
         }
         let key = ObjectIdentifier(websiteDataStore)
-        let remainingTimeout = max(0.5, deadline.timeIntervalSince(now))
+        let remainingTimeout = try Self.remainingNavigationTimeout(until: deadline, now: now)
 
         if let entry = self.entries[key] {
             if entry.isBusy {
@@ -430,9 +453,11 @@ final class OpenAIDashboardWebViewCache {
         entry.clearPreservedPage()
         Self.log.debug("OpenAI webview evicted")
         entry.host.close()
+        self.scheduleNextIdlePrune()
     }
 
     func evictAll() {
+        self.cancelIdlePrune()
         let existing = self.entries
         self.entries.removeAll()
         for (_, entry) in existing {
@@ -442,6 +467,21 @@ final class OpenAIDashboardWebViewCache {
         if !existing.isEmpty {
             Self.log.debug("OpenAI webview evicted all")
         }
+    }
+
+    func evictIdle() {
+        let idleEntries = self.entries.filter { _, entry in
+            !entry.isBusy
+        }
+        guard !idleEntries.isEmpty else { return }
+
+        for (key, entry) in idleEntries {
+            entry.clearPreservedPage()
+            entry.host.close()
+            self.entries.removeValue(forKey: key)
+        }
+        Self.log.debug("OpenAI idle webviews evicted", metadata: ["count": "\(idleEntries.count)"])
+        self.scheduleNextIdlePrune()
     }
 
     private func prepareCachedWebViewForIdle(
@@ -464,6 +504,46 @@ final class OpenAIDashboardWebViewCache {
         host.hide()
     }
 
+    /// Schedule against the oldest idle entry so later releases cannot postpone its eviction.
+    private func scheduleNextIdlePrune(now: Date = Date()) {
+        self.cancelIdlePrune()
+
+        guard let nextExpiry = self.entries.values
+            .filter({ !$0.isBusy })
+            .map({ $0.lastUsedAt.addingTimeInterval(self.idleTimeout) })
+            .min()
+        else { return }
+
+        let generation = self.idlePruneGeneration
+        let workItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.idlePruneGeneration == generation else { return }
+                self.idlePruneWorkItem = nil
+                #if DEBUG
+                self.idlePruneDeadlineForTesting = nil
+                #endif
+                let pruneTime = Date()
+                self.prune(now: pruneTime)
+                self.scheduleNextIdlePrune(now: pruneTime)
+            }
+        }
+        self.idlePruneWorkItem = workItem
+        #if DEBUG
+        self.idlePruneDeadlineForTesting = nextExpiry
+        #endif
+        let delay = max(0, nextExpiry.timeIntervalSince(now)) + 0.01
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func cancelIdlePrune() {
+        self.idlePruneGeneration &+= 1
+        self.idlePruneWorkItem?.cancel()
+        self.idlePruneWorkItem = nil
+        #if DEBUG
+        self.idlePruneDeadlineForTesting = nil
+        #endif
+    }
+
     private func prune(now: Date) {
         for entry in self.entries.values where !entry.isBusy && entry.hasExpiredPreservedPage(now: now) {
             entry.clearPreservedPage()
@@ -475,7 +555,7 @@ final class OpenAIDashboardWebViewCache {
         }
 
         let expired = self.entries.filter { _, entry in
-            !entry.isBusy && now.timeIntervalSince(entry.lastUsedAt) > self.idleTimeout
+            !entry.isBusy && now.timeIntervalSince(entry.lastUsedAt) >= self.idleTimeout
         }
         for (key, entry) in expired {
             entry.host.close()
@@ -555,7 +635,7 @@ final class OpenAIDashboardWebViewCache {
         log: @escaping (String) -> Void,
         deadline: Date) async throws -> OpenAIDashboardWebViewLease
     {
-        let remainingTimeout = max(0.5, deadline.timeIntervalSinceNow)
+        let remainingTimeout = try Self.remainingNavigationTimeout(until: deadline)
         let (webView, host) = self.makeWebView(websiteDataStore: websiteDataStore)
         host.show()
         do {

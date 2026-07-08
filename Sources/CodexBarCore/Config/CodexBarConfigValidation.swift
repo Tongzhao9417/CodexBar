@@ -33,6 +33,7 @@ public enum CodexBarConfigValidator {
         .openai,
         .opencode,
         .opencodego,
+        .devin,
         .deepgram,
     ]
 
@@ -137,6 +138,8 @@ public enum CodexBarConfigValidator {
 
         self.validateRegion(entry, issues: &issues)
 
+        self.validateZaiTeamContext(entry, issues: &issues)
+
         if let workspaceID = entry.workspaceID,
            !workspaceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            !self.providerSupportsWorkspaceID(provider)
@@ -158,7 +161,8 @@ public enum CodexBarConfigValidator {
                 provider: provider,
                 field: "enterpriseHost",
                 code: "enterprise_host_unused",
-                message: "enterpriseHost is set but only azureopenai, copilot, and llmproxy support enterpriseHost."))
+                message: "enterpriseHost is set but only azureopenai, copilot, kimi, " +
+                    "llmproxy, and litellm support enterpriseHost."))
         }
 
         if let tokenAccounts = entry.tokenAccounts, !tokenAccounts.accounts.isEmpty,
@@ -176,7 +180,8 @@ public enum CodexBarConfigValidator {
     private static func validateSecretKey(_ entry: ProviderConfig, issues: inout [CodexBarConfigIssue]) {
         guard let secretKey = entry.secretKey,
               !secretKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              entry.id != .bedrock
+              entry.id != .bedrock,
+              entry.id != .doubao
         else {
             return
         }
@@ -186,7 +191,30 @@ public enum CodexBarConfigValidator {
             provider: entry.id,
             field: "secretKey",
             code: "secret_key_unused",
-            message: "secretKey is set but only bedrock uses secretKey."))
+            message: "secretKey is set but only bedrock and doubao use secretKey."))
+    }
+
+    private static func validateZaiTeamContext(_ entry: ProviderConfig, issues: inout [CodexBarConfigIssue]) {
+        guard entry.id == .zai else { return }
+
+        guard let tokenAccounts = entry.tokenAccounts else { return }
+        for account in tokenAccounts.accounts
+            where account.sanitizedUsageScope?.lowercased() == ZaiUsageScope.team.rawValue
+        {
+            if account.sanitizedOrganizationID == nil || account.sanitizedWorkspaceID == nil {
+                issues.append(self.zaiMissingTeamContextIssue(field: "tokenAccounts"))
+                return
+            }
+        }
+    }
+
+    private static func zaiMissingTeamContextIssue(field: String) -> CodexBarConfigIssue {
+        CodexBarConfigIssue(
+            severity: .warning,
+            provider: .zai,
+            field: field,
+            code: "zai_team_context_missing",
+            message: "z.ai Team mode requires both organizationID and workspaceID.")
     }
 
     private static func providerSupportsWorkspaceID(_ provider: UsageProvider) -> Bool {
@@ -206,7 +234,7 @@ public enum CodexBarConfigValidator {
 
     private static func providerSupportsEnterpriseHost(_ provider: UsageProvider) -> Bool {
         switch provider {
-        case .azureopenai, .copilot, .llmproxy:
+        case .azureopenai, .copilot, .kimi, .llmproxy, .litellm, .clawrouter:
             true
         default:
             false
@@ -243,6 +271,13 @@ public enum CodexBarConfigValidator {
                 isValid: AlibabaCodingPlanAPIRegion(rawValue: region) != nil,
                 displayName: "Alibaba Coding Plan",
                 issues: &issues)
+        case .alibabatokenplan:
+            self.validateKnownRegion(
+                region,
+                provider: provider,
+                isValid: AlibabaTokenPlanAPIRegion(rawValue: region) != nil,
+                displayName: "Alibaba Token Plan",
+                issues: &issues)
         case .moonshot:
             self.validateKnownRegion(
                 region,
@@ -250,7 +285,7 @@ public enum CodexBarConfigValidator {
                 isValid: MoonshotRegion(rawValue: region) != nil,
                 displayName: "Moonshot",
                 issues: &issues)
-        case .bedrock:
+        case .bedrock, .doubao:
             break
         default:
             issues.append(CodexBarConfigIssue(

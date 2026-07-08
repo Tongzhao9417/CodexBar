@@ -63,6 +63,19 @@ struct ProviderSettingsDescriptorTests {
     }
 
     @Test
+    func `antigravity usage source picker clarifies local ide and agy`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-antigravity-source")
+        let context = fixture.settingsContext(provider: .antigravity)
+
+        let pickers = AntigravityProviderImplementation().settingsPickers(context: context)
+        let usagePicker = try #require(pickers.first(where: { $0.id == "antigravity-usage-source" }))
+
+        #expect(usagePicker.options.map(\.title) == ["Auto", "Google OAuth", "Local API / agy CLI"])
+        #expect(usagePicker.subtitle ==
+            "Auto tries Antigravity app, agy CLI, then IDE; OAuth follows for selected or signed-in accounts.")
+    }
+
+    @Test
     func `codex exposes open AI web extras toggle as default off opt in`() throws {
         let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-codex-openai-toggle")
         let context = fixture.settingsContext(provider: .codex)
@@ -101,16 +114,37 @@ struct ProviderSettingsDescriptorTests {
     }
 
     @Test
-    func `claude prompt policy picker hidden when experimental reader selected`() throws {
+    func `claude prompt policy picker remains visible for prompt free toggle`() throws {
         let fixture = try self.makeSettingsFixture(
-            suite: "ProviderSettingsDescriptorTests-claude-prompt-hidden-experimental")
+            suite: "ProviderSettingsDescriptorTests-claude-prompt-visible-prompt-free")
         fixture.settings.debugDisableKeychainAccess = false
-        fixture.settings.claudeOAuthKeychainReadStrategy = .securityCLIExperimental
+        fixture.settings.claudeOAuthPromptFreeCredentialsEnabled = true
         let context = fixture.settingsContext(provider: .claude)
 
         let pickers = ClaudeProviderImplementation().settingsPickers(context: context)
         let keychainPicker = try #require(pickers.first(where: { $0.id == "claude-keychain-prompt-policy" }))
-        #expect(keychainPicker.isVisible?() == false)
+        #expect(keychainPicker.isVisible?() ?? true)
+        #expect(keychainPicker.binding.wrappedValue == ClaudeOAuthKeychainPromptMode.never.rawValue)
+    }
+
+    @Test
+    func `claude avoid keychain prompts toggle is disabled when global keychain disabled`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-claude-prompt-free-disabled")
+        fixture.settings.debugDisableKeychainAccess = true
+        fixture.settings.claudeOAuthPromptFreeCredentialsEnabled = true
+        let context = fixture.settingsContext(provider: .claude)
+
+        let toggles = ClaudeProviderImplementation().settingsToggles(context: context)
+        let promptFreeToggle = try #require(toggles.first(where: { $0.id == "claude-oauth-prompt-free-credentials" }))
+        #expect(promptFreeToggle.isEnabled?() == false)
+        #expect(promptFreeToggle.binding.wrappedValue == true)
+
+        promptFreeToggle.binding.wrappedValue = false
+        #expect(fixture.settings.claudeOAuthPromptFreeCredentialsEnabled == true)
+
+        fixture.settings.debugDisableKeychainAccess = false
+        #expect(promptFreeToggle.isEnabled?() == true)
+        #expect(promptFreeToggle.binding.wrappedValue == true)
     }
 
     @Test
@@ -154,6 +188,62 @@ struct ProviderSettingsDescriptorTests {
     }
 
     @Test
+    func `copilot budget secondary picker appears before cookie picker`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-copilot-budget-pickers")
+        fixture.settings.copilotBudgetExtrasEnabled = true
+        let context = fixture.settingsContext(provider: .copilot)
+
+        let pickers = CopilotProviderImplementation().settingsPickers(context: context)
+
+        #expect(pickers.map(\.id) == ["copilot-icon-secondary-window", "copilot-budget-cookie-source"])
+        #expect(pickers.first?.title == "Menu bar secondary metric")
+    }
+
+    @Test
+    func `copilot manual cookie field is labelled and refreshable`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-copilot-budget-field")
+        fixture.settings.copilotBudgetExtrasEnabled = true
+        fixture.settings.copilotBudgetCookieSource = .manual
+        let context = fixture.settingsContext(provider: .copilot)
+
+        let fields = CopilotProviderImplementation().settingsFields(context: context)
+        let field = try #require(fields.first { $0.id == "copilot-budget-cookie-header" })
+
+        #expect(field.title == "Manual GitHub Cookie header")
+        #expect(field.subtitle.contains("Treat this value like a password"))
+        #expect(field.actions.map(\.id) == ["refresh-copilot-budget-cookie"])
+    }
+
+    @Test
+    func `kimi exposes usage source picker plus api and cookie fields`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-kimi")
+        let context = fixture.settingsContext(provider: .kimi)
+
+        let implementation = KimiProviderImplementation()
+        let pickers = implementation.settingsPickers(context: context)
+        let fields = implementation.settingsFields(context: context)
+
+        #expect(pickers.contains(where: { $0.id == "kimi-usage-source" }))
+        #expect(pickers.contains(where: { $0.id == "kimi-cookie-source" }))
+        #expect(fields.contains(where: { $0.id == "kimi-api-key" }))
+        #expect(fields.contains(where: { $0.id == "kimi-cookie" }))
+    }
+
+    @Test
+    func `kimi presentation follows selected source label`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-kimi-presentation")
+        fixture.settings.kimiUsageDataSource = .api
+        let metadata = try #require(ProviderDescriptorRegistry.metadata[.kimi])
+        let context = fixture.presentationContext(provider: .kimi, metadata: metadata)
+
+        let detailLine = KimiProviderImplementation()
+            .presentation(context: context)
+            .detailLine(context)
+
+        #expect(detailLine == "api")
+    }
+
+    @Test
     func `deepgram exposes api key and project id fields`() throws {
         let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-deepgram")
         let context = fixture.settingsContext(provider: .deepgram)
@@ -180,6 +270,20 @@ struct ProviderSettingsDescriptorTests {
             .detailLine(context)
 
         #expect(detailLine == fixture.store.sourceLabel(for: .alibaba))
+    }
+
+    @Test
+    func `devin presentation follows store source label`() throws {
+        let fixture = try self.makeSettingsFixture(suite: "ProviderSettingsDescriptorTests-devin-presentation")
+        fixture.store.lastSourceLabels[.devin] = "web"
+        let metadata = try #require(ProviderDescriptorRegistry.metadata[.devin])
+        let context = fixture.presentationContext(provider: .devin, metadata: metadata)
+
+        let detailLine = DevinProviderImplementation()
+            .presentation(context: context)
+            .detailLine(context)
+
+        #expect(detailLine == "web")
     }
 
     @Test
