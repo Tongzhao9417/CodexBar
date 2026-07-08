@@ -99,6 +99,8 @@
 "Could not start codex login" = "Kan codex-aanmelding niet starten";
 "Could not switch system account" = "Kan van systeemaccount niet wisselen";
 "Credits" = "Kredieten";
+"Individual credits" = "Individuele kredieten";
+"Workspace" = "Werkruimte";
 "Credits history" = "Creditgeschiedenis";
 "Cursor login failed" = "Cursoraanmelding mislukt";
 "Custom" = "Aangepast";
@@ -232,6 +234,7 @@
 "Picker subtitle" = "Ondertitel kiezen";
 "Placeholder" = "Tijdelijke aanduiding";
 "Plan" = "Plan";
+"Plan Usage" = "Plangebruik";
 "Play full-screen confetti when weekly usage resets." = "Speel confetti op volledig scherm af wanneer het wekelijkse gebruik wordt gereset.";
 "Polls OpenAI/Claude status pages and Google Workspace for " = "Polls OpenAI/Claude-statuspagina's en Google Workspace voor";
 "Prevents any Keychain access while enabled." = "Voorkomt elke sleutelhangertoegang indien ingeschakeld.";
@@ -299,12 +302,13 @@
 "Stored in ~/.codexbar/config.json. Paste your MiniMax API key." = "Opgeslagen in ~/.codexbar/config.json. Plak uw MiniMax API-sleutel.";
 "Stored in ~/.codexbar/config.json. You can also provide KILO_API_KEY or " = "Opgeslagen in ~/.codexbar/config.json. U kunt ook KILO_API_KEY of";
 "Stores local Codex usage history (8 weeks) to personalize Pace predictions." = "Slaat de lokale Codex-gebruiksgeschiedenis op (8 weken) om tempo-voorspellingen te personaliseren.";
-"Subscription Utilization" = "Abonnementsgebruik";
 "Surprise me" = "Verras mij";
 "Switcher shows icons" = "Switcher toont pictogrammen";
 "Symlink CodexBarCLI to /usr/local/bin and /opt/homebrew/bin as codexbar." = "Symlink CodexBarCLI naar /usr/local/bin en /opt/homebrew/bin als codexbar.";
 "System" = "Systeem";
 "Temporarily shows the loading animation after the next refresh." = "Toont tijdelijk de laadanimatie na de volgende vernieuwing.";
+"terminal_app_subtitle" = "Terminal gebruikt door de actie Terminal openen";
+"terminal_app_title" = "Standaardterminal";
 "Tertiary (\\(label))" = "Tertiair (\\(label))";
 "Tertiary (\\(tertiaryTitle))" = "Tertiair (\\(tertiaryTitle))";
 "The default Codex account on this Mac." = "Het standaard Codex-account op deze Mac.";
@@ -400,19 +404,40 @@
 "language_chinese_traditional" = "繁體中文";
 "language_portuguese_brazilian" = "Portugees (Brazilië)";
 "language_dutch" = "Nederlands";
+"language_german" = "Duits";
 "language_french" = "Frans";
 "language_ukrainian" = "Oekraïens";
+"language_russian" = "Русский";
+"language_japanese" = "Japans";
+"language_korean" = "Koreaans";
+"language_italian" = "Italiano";
 "language_swedish" = "Zweeds";
 "language_vietnamese" = "Vietnamees";
+"language_turkish" = "Türkçe";
+"language_indonesian" = "Indonesisch";
+"language_polish" = "Pools";
 "start_at_login_title" = "Begin bij Inloggen";
 "start_at_login_subtitle" = "Opent automatisch CodexBar wanneer u uw Mac start.";
 "show_cost_summary" = "Kostenoverzicht weergeven";
 "show_cost_summary_subtitle" = "Leest lokale gebruikslogboeken. Toont vandaag + het geselecteerde geschiedenisvenster in het menu.";
+"cost_summary_style_title" = "Weergavestijl";
+"cost_summary_style_inline" = "Alleen inline";
+"cost_summary_style_submenu" = "Alleen submenu";
+"cost_summary_style_both" = "Beide";
+"cost_summary_style_inline_help" = "Toont het kostenoverzicht rechtstreeks in het hoofdmenu.";
+"cost_summary_style_submenu_help" = "Toont in plaats daarvan het gedetailleerde Kosten-submenu.";
+"cost_summary_style_both_help" = "Toont zowel het hoofdmenu-overzicht als het gedetailleerde Kosten-submenu.";
+"cost_history_window_title" = "Geschiedenisvenster";
+"cost_history_window_help" = "Stelt in hoeveel dagen lokale gebruikslogboeken in het menu verschijnen.";
 "cost_history_days_title" = "Geschiedenisvenster: %d dagen";
 "cost_auto_refresh_info" = "Automatisch vernieuwen: elk uur · Time-out: 10m";
+"cost_comparison_periods_title" = "Kortere vergelijkingsperioden tonen";
+"cost_comparison_periods_subtitle" = "Voegt totalen voor 7, 30 en 90 dagen toe wanneer ze binnen het geselecteerde geschiedenisvenster vallen. Deze totalen gebruiken dezelfde lokale scan.";
 "refresh_cadence_title" = "Cadans vernieuwen";
 "refresh_cadence_subtitle" = "Hoe vaak CodexBar providers op de achtergrond ondervraagt.";
 "manual_refresh_hint" = "Automatisch vernieuwen is uitgeschakeld; gebruik de opdracht Vernieuwen van het menu.";
+"refresh_on_open_title" = "Vernieuwen bij openen van menu";
+"refresh_on_open_subtitle" = "Haalt bij elke keer dat je het menu opent het meest recente gebruik van elke provider op.";
 "check_provider_status_title" = "Controleer de status van de provider";
 "check_provider_status_subtitle" = "Polls van OpenAI/Claude-statuspagina's en Google Workspace voor Gemini/Antigravity, waarbij incidenten in het pictogram en het menu worden weergegeven.";
 "session_quota_notifications_title" = "Meldingen over sessiequota";
@@ -434,6 +459,7 @@
 "quota_warning_warn_at" = "Waarschuw bij";
 "quota_warning_global_threshold_subtitle" = "Resterende percentages voor sessie- en wekelijkse vensters, tenzij een provider deze overschrijft.";
 "quota_warning_sound" = "Meldingsgeluid afspelen";
+"quota_warning_onscreen_alert" = "Tekstwaarschuwing op het scherm tonen";
 "quota_warning_provider_inherits" = "Gebruikt de algemene instellingen voor quotawaarschuwingen, tenzij hier een venster wordt aangepast.";
 "quota_warning_customize_thresholds" = "Pas %@ drempels aan";
 "quota_warning_enable_warnings" = "Schakel %@ waarschuwingen in";
@@ -489,6 +515,8 @@
 "show_most_used_provider_subtitle" = "De menubalk toont automatisch de aanbieder die het dichtst bij de tarieflimiet zit.";
 "menu_bar_shows_percent_title" = "Menubalk toont percentage";
 "menu_bar_shows_percent_subtitle" = "Vervang critterbalken door brandingpictogrammen van de provider en een percentage.";
+"hide_critters_title" = "Critters verbergen";
+"hide_critters_subtitle" = "Toon eenvoudige meterbalken zonder gezicht en versieringen.";
 "display_mode_title" = "Weergavemodus";
 "display_mode_subtitle" = "Kies wat u wilt weergeven in de menubalk (Tempo toont gebruik vs. verwacht).";
 "section_menu_content" = "Menu-inhoud";
@@ -497,7 +525,7 @@
 "show_quota_warning_markers_title" = "Toon waarschuwingsmarkeringen voor quota";
 "show_quota_warning_markers_subtitle" = "Teken drempelmarkeringen op gebruiksbalken wanneer quotawaarschuwingen zijn geconfigureerd.";
 "weekly_progress_work_days_title" = "Wekelijkse voortgang werkdagen";
-"weekly_progress_work_days_subtitle" = "Teken daggrensmarkeringen op de wekelijkse gebruiksbalken.";
+"weekly_progress_work_days_subtitle" = "Stel werkdagen in voor markeringen op wekelijkse gebruiksbalken en tempoberekeningen.";
 "show_reset_time_as_clock_title" = "Toon resettijd als klok";
 "show_reset_time_as_clock_subtitle" = "Geef resettijden weer als absolute klokwaarden in plaats van aftellingen.";
 "show_provider_changelog_links_title" = "Toon provider changelog-links";
@@ -529,6 +557,8 @@
 "show_debug_settings_subtitle" = "Geef hulpprogramma's voor probleemoplossing weer op het tabblad Foutopsporing.";
 "surprise_me_title" = "Verras mij";
 "surprise_me_subtitle" = "Controleer of je het leuk vindt dat je agenten daar plezier hebben.";
+"session_limit_confetti_title" = "Confetti bij sessielimiet";
+"session_limit_confetti_subtitle" = "Speel confetti op volledig scherm af wanneer het sessiegebruik wordt gereset.";
 "weekly_limit_confetti_title" = "Wekelijkse limiet confetti";
 "weekly_limit_confetti_subtitle" = "Speel confetti op volledig scherm af wanneer het wekelijkse gebruik wordt gereset.";
 "hide_personal_info_title" = "Verberg persoonlijke informatie";
@@ -617,17 +647,22 @@
 "metric_pref_tertiary" = "Tertiair";
 "metric_pref_extra_usage" = "Extra gebruik";
 "metric_pref_average" = "Gemiddeld";
+"metric_mistral_payg" = "Pay-as-you-go";
+"metric_mistral_monthly_plan" = "Monthly Plan";
 
 /* Display modes */
 "display_mode_percent" = "Procent";
 "display_mode_pace" = "Tempo";
 "display_mode_both" = "Beide";
+"display_mode_reset_time" = "Resettijd";
 "display_mode_percent_desc" = "Toon resterend/gebruikt percentage (bijvoorbeeld 45%)";
 "display_mode_pace_desc" = "Toon tempo-indicator (bijv. +5%)";
 "display_mode_both_desc" = "Toon zowel percentage als tempo (bijvoorbeeld 45% · +5%)";
+"display_mode_reset_time_desc" = "Toon de resettijd voor de geselecteerde metriek (bijvoorbeeld ↻ 15:56)";
 
 /* Provider status */
 "status_operational" = "Operationeel";
+"status_degraded" = "Verminderde prestaties";
 "status_partial_outage" = "Gedeeltelijke uitval";
 "status_major_outage" = "Grote storing";
 "status_critical_issue" = "Kritieke kwestie";
@@ -641,6 +676,7 @@
 "refresh_5min" = "5 min";
 "refresh_15min" = "15 minuten";
 "refresh_30min" = "30 min";
+"refresh_adaptive" = "Adaptief";
 
 /* Additional keys */
 "not_found" = "Niet gevonden";
@@ -684,6 +720,7 @@
 "Add Account..." = "Account toevoegen...";
 "Usage Dashboard" = "Gebruiksdashboard";
 "Status Page" = "Statuspagina";
+"Open Status Page" = "Statuspagina openen";
 "Settings..." = "Instellingen...";
 "About CodexBar" = "Over CodexBar";
 "Quit" = "Stoppen";
@@ -696,8 +733,12 @@
 "Resets %@" = "Reset %@";
 "Resets in %@" = "Resetten over %@";
 "Resets now" = "Wordt nu gereset";
+"reset_tomorrow_format" = "morgen, %@";
 "Lasts until reset" = "Gaat mee tot reset";
+"1.5× headroom" = "1,5× speelruimte";
 "Updated %@" = "Bijgewerkt %@";
+"Updated relative %@" = "Bijgewerkt %@";
+"Updated absolute %@" = "Bijgewerkt %@";
 "Updated %@h ago" = "%@u geleden bijgewerkt";
 "Updated %@m ago" = "%@m geleden bijgewerkt";
 "Updated just now" = "Zojuist bijgewerkt";
@@ -794,6 +835,7 @@
 "API spend" = "API-uitgaven";
 "Extra usage" = "Extra gebruik";
 "Quota usage" = "Quotumgebruik";
+"Your spend" = "Jouw uitgaven";
 "%.0f%% used" = "%.0f%% gebruikt";
 "Usage history (today)" = "Gebruiksgeschiedenis (vandaag)";
 "Usage history (%d days)" = "Gebruiksgeschiedenis (%d dagen)";
@@ -909,7 +951,7 @@
 "Antigravity login failed" = "Antigravity-aanmelding mislukt";
 "Antigravity login timed out" = "Er is een time-out opgetreden bij het inloggen op anti-zwaartekracht";
 "Auth source" = "Authenticatiebron";
-"Automatic imports Chrome browser cookies from Xiaomi MiMo." = "Importeert automatisch Chrome-browsercookies van Xiaomi MiMo.";
+"Automatic imports browser cookies from Xiaomi MiMo." = "Importeert automatisch browsercookies van Xiaomi MiMo.";
 "Automatic imports Windsurf session data from Chromium browser localStorage." = "Automatische import van windsurfsessiegegevens uit de Chromium-browser localStorage.";
 "Automatic imports browser cookies from Bailian." = "Importeert automatisch browsercookies van Bailian.";
 "Automatically imports browser cookies." = "Importeert automatisch browsercookies.";
@@ -958,10 +1000,15 @@
 "Day" = "Dag";
 "Deployment" = "Inzet";
 "Drag to reorder" = "Sleep om de volgorde te wijzigen";
+"Sort providers alphabetically" = "Providers alfabetisch sorteren";
+"Sort providers alphabetically (enabled first)" = "Providers alfabetisch sorteren (ingeschakelde eerst)";
+"Sorted alphabetically (enabled first) — click to use your custom order" = "Alfabetisch gesorteerd (ingeschakelde eerst) — klik om je aangepaste volgorde te gebruiken";
 "Endpoint" = "Eindpunt";
 "Enterprise host" = "Enterprise-host";
 "Extra usage balance: %@" = "Extra gebruikssaldo: %@";
 "Keychain Access Required" = "Toegang tot sleutelhanger vereist";
+"keychain_prompt_learn_more" = "Meer informatie…";
+"keychain_prompt_privacy_note" = "De invoer van het Mac-inlogwachtwoord wordt verwerkt door macOS, niet door CodexBar. Je kunt sleutelhanger toegang op elk moment uitschakelen via Instellingen → Geavanceerd.";
 "Kiro menu bar value" = "Waarde van de Kiro-menubalk";
 "Label" = "Label";
 "No organizations loaded. Click Refresh after setting your API key." = "Er zijn geen organisaties geladen. Klik op Vernieuwen nadat u uw API-sleutel hebt ingesteld.";
@@ -988,6 +1035,7 @@
 "Optional. Leave blank to discover and aggregate projects visible to the API key." = "Optioneel. Laat dit veld leeg om projecten te ontdekken en samen te voegen die zichtbaar zijn voor de API-sleutel.";
 "Org ID (optional)" = "Organisatie-ID (optioneel)";
 "Organizations" = "Organisaties";
+"Organization ID" = "Organisatie-ID";
 "Password" = "Wachtwoord";
 "%@ authentication is disabled." = "%@-authenticatie is uitgeschakeld.";
 "%@ cookies are disabled." = "%@ cookies zijn uitgeschakeld.";
@@ -1009,6 +1057,7 @@
 "Personal account" = "Persoonlijk account";
 "Project ID" = "Project-ID";
 "Re-auth" = "Opnieuw verifiëren";
+"Re-login at claude.ai" = "Opnieuw aanmelden bij claude.ai";
 "Re-authenticating…" = "Opnieuw authenticeren…";
 "Refresh Session" = "Sessie vernieuwen";
 "Refresh organizations" = "Vernieuw organisaties";
@@ -1040,6 +1089,7 @@
 "Stored in ~/.codexbar/config.json. You can also provide CROF_API_KEY." = "Opgeslagen in ~/.codexbar/config.json. U kunt ook CROF_API_KEY opgeven.";
 "Stored in ~/.codexbar/config.json. You can also provide KILO_API_KEY or ~/.local/share/kilo/auth.json (kilo.access)." = "Opgeslagen in ~/.codexbar/config.json. U kunt ook KILO_API_KEY of ~/.local/share/kilo/auth.json (kilo.access) opgeven.";
 "T3 Chat cookie" = "T3 Chat-cookie";
+"Team mode" = "Teammodus";
 "That account is no longer available in CodexBar. Refresh the account list and try again." = "Dat account is niet langer beschikbaar in CodexBar. Vernieuw de accountlijst en probeer het opnieuw.";
 "The browser login did not complete in time. Try Antigravity login again." = "De browseraanmelding is niet op tijd voltooid. Probeer Antigravity-login opnieuw.";
 "Timed out waiting for Cursor login. %@" = "Er is een time-out opgetreden tijdens het wachten op cursoraanmelding. %@";
@@ -1064,3 +1114,43 @@
 "Clear" = "Duidelijk";
 "No matching providers" = "Geen overeenkomende aanbieders";
 "Search providers" = "Zoekaanbieders";
+"language_arabic" = "العربية";
+"language_persian" = "فارسی";
+"language_thai" = "ไทย";
+"language_galician" = "Galego";
+"Limit Reset Credits" = "Limietresetcredits";
+"1 available" = "1 beschikbaar";
+"%d available" = "%d beschikbaar";
+"Next expires %@" = "Volgende verloopt %@";
+"Expires %@" = "Verloopt %@";
+"No expiry" = "Geen vervaldatum";
+"Other (%d items)" = "Overig (%d onderdelen)";
+"Expand" = "Uitvouwen";
+"Collapse" = "Invouwen";
+"byte_unit_byte" = "byte";
+"byte_unit_bytes" = "bytes";
+"byte_unit_kilobyte" = "kilobyte";
+"byte_unit_kilobytes" = "kilobytes";
+"byte_unit_megabyte" = "megabyte";
+"byte_unit_megabytes" = "megabytes";
+"byte_unit_gigabyte" = "gigabyte";
+"byte_unit_gigabytes" = "gigabytes";
+"CrossModel API spend trend" = "CrossModel API-uitgaventrend";
+
+/* Settings sidebar redesign */
+"Enable" = "Inschakelen";
+"Disable" = "Uitschakelen";
+"providers_on_count" = "%d aan";
+"section_cost_summary" = "Kostenoverzicht";
+"section_command_line" = "Opdrachtregel";
+"section_privacy" = "Privacy";
+"section_diagnostics" = "Diagnostiek";
+"section_updates" = "Updates";
+"section_links" = "Links";
+
+/* Sub2API account import */
+"Import JSON…" = "Import JSON…";
+"Importing JSON…" = "Importing JSON…";
+"Import sub2api JSON" = "Import sub2api JSON";
+"Import" = "Import";
+"imported_sub2api_accounts_message" = "Imported %d OpenAI OAuth account(s), updated %d: %@";

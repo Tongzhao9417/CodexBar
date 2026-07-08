@@ -2,6 +2,7 @@ import Foundation
 
 struct SettingsDefaultsState {
     var refreshFrequency: RefreshFrequency
+    var refreshAllProvidersOnMenuOpen: Bool
     var launchAtLogin: Bool
     var debugMenuEnabled: Bool
     var debugDisableKeychainAccess: Bool
@@ -18,21 +19,28 @@ struct SettingsDefaultsState {
     var quotaWarningSessionEnabled: Bool
     var quotaWarningWeeklyEnabled: Bool
     var quotaWarningSoundEnabled: Bool
+    var quotaWarningOnScreenAlertEnabled: Bool
     var quotaWarningMarkersVisible: Bool
     var weeklyProgressWorkDays: Int?
     var usageBarsShowUsed: Bool
     var resetTimesShowAbsolute: Bool
     var providerChangelogLinksEnabled: Bool
     var menuBarShowsBrandIconWithPercent: Bool
+    var menuBarHidesCritters: Bool
     var menuBarDisplayModeRaw: String?
     var kiroMenuBarDisplayModeRaw: String?
     var historicalTrackingEnabled: Bool
     var multiAccountMenuLayoutRaw: String
     var menuBarMetricPreferencesRaw: [String: String]
+    var copilotBudgetExtrasEnabled: Bool
+    var copilotIconSecondaryWindowIDRaw: String
     var costUsageEnabled: Bool
     var costUsageHistoryDays: Int
+    var costComparisonPeriodsEnabled: Bool
+    var costSummaryDisplayStyleRaw: String
     var hidePersonalInfo: Bool
     var randomBlinkEnabled: Bool
+    var confettiOnSessionLimitResetsEnabled: Bool
     var confettiOnWeeklyLimitResetsEnabled: Bool
     var menuBarShowsHighestUsage: Bool
     var claudeOAuthKeychainPromptModeRaw: String?
@@ -49,5 +57,9 @@ struct SettingsDefaultsState {
     var mergedOverviewSelectedProvidersRaw: [String]
     var selectedMenuProviderRaw: String?
     var providerDetectionCompleted: Bool
+    var providersSortedAlphabetically: Bool
     var appLanguageRaw: String?
+    var terminalAppRaw: String?
+    var agentSessionsEnabled: Bool
+    var agentSessionsManualHosts: String
 }

@@ -1,3 +1,4 @@
+import AppKit
 import CodexBarCore
 import Foundation
 import SwiftUI
@@ -28,6 +29,82 @@ struct ProvidersPaneCoverageTests {
     }
 
     @Test
+    func `zai token account descriptor shows team mode controls only for zai`() throws {
+        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-zai-team-controls")
+        let store = Self.makeUsageStore(settings: settings)
+        let pane = ProvidersPane(settings: settings, store: store)
+
+        let zaiDescriptor = try #require(pane._test_tokenAccountDescriptor(for: .zai))
+        #expect(zaiDescriptor.showsTeamModeControls)
+        #expect(!zaiDescriptor.showsOrganizationField)
+
+        let claudeDescriptor = try #require(pane._test_tokenAccountDescriptor(for: .claude))
+        #expect(!claudeDescriptor.showsTeamModeControls)
+        #expect(claudeDescriptor.showsOrganizationField)
+    }
+
+    @Test
+    func `zai team account add button requires organization and project`() {
+        #expect(ProviderSettingsTokenAccountsRowView.isAddDisabled(
+            label: "Team",
+            token: "token",
+            showsTeamModeControls: true,
+            teamMode: true,
+            teamContext: (organizationID: "", projectID: "proj-test")))
+        #expect(ProviderSettingsTokenAccountsRowView.isAddDisabled(
+            label: "Team",
+            token: "token",
+            showsTeamModeControls: true,
+            teamMode: true,
+            teamContext: (organizationID: "org-test", projectID: "")))
+        #expect(!ProviderSettingsTokenAccountsRowView.isAddDisabled(
+            label: "Team",
+            token: "token",
+            showsTeamModeControls: true,
+            teamMode: true,
+            teamContext: (organizationID: "org-test", projectID: "proj-test")))
+        #expect(!ProviderSettingsTokenAccountsRowView.isAddDisabled(
+            label: "Personal",
+            token: "token",
+            showsTeamModeControls: true,
+            teamMode: false,
+            teamContext: (organizationID: "", projectID: "")))
+    }
+
+    @Test
+    func `zai team account draft requires complete ids before apply`() {
+        let original = ProviderSettingsTokenAccountsRowView.TeamAccountDraft(
+            teamMode: false,
+            organizationID: "",
+            projectID: "")
+
+        #expect(ProviderSettingsTokenAccountsRowView.isTeamDraftApplyDisabled(
+            draft: original,
+            original: original))
+        #expect(ProviderSettingsTokenAccountsRowView.isTeamDraftApplyDisabled(
+            draft: ProviderSettingsTokenAccountsRowView.TeamAccountDraft(
+                teamMode: true,
+                organizationID: "org-test",
+                projectID: ""),
+            original: original))
+        #expect(!ProviderSettingsTokenAccountsRowView.isTeamDraftApplyDisabled(
+            draft: ProviderSettingsTokenAccountsRowView.TeamAccountDraft(
+                teamMode: true,
+                organizationID: "org-test",
+                projectID: "proj-test"),
+            original: original))
+        #expect(!ProviderSettingsTokenAccountsRowView.isTeamDraftApplyDisabled(
+            draft: ProviderSettingsTokenAccountsRowView.TeamAccountDraft(
+                teamMode: false,
+                organizationID: "",
+                projectID: ""),
+            original: ProviderSettingsTokenAccountsRowView.TeamAccountDraft(
+                teamMode: true,
+                organizationID: "org-test",
+                projectID: "proj-test")))
+    }
+
+    @Test
     func `provider search filters display names and raw ids`() {
         let providers: [UsageProvider] = [.codex, .claude, .openrouter, .deepseek]
         let names: [UsageProvider: String] = [
@@ -49,6 +126,60 @@ struct ProvidersPaneCoverageTests {
         #expect(
             ProvidersPane.filteredProviders(providers, query: "deepseek", displayName: { _ in "API" })
                 == [.deepseek])
+    }
+
+    @Test
+    func `provider reordering is inert while alphabetical sorting is enabled`() {
+        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-sorted-reorder")
+        let store = Self.makeUsageStore(settings: settings)
+        let pane = ProvidersPane(settings: settings, store: store)
+        let original = settings.orderedProviders()
+
+        settings.providersSortedAlphabetically = true
+        pane._test_moveProviders(fromOffsets: IndexSet(integer: 0), toOffset: original.count)
+        #expect(settings.orderedProviders() == original)
+
+        settings.providersSortedAlphabetically = false
+        pane._test_moveProviders(fromOffsets: IndexSet(integer: 0), toOffset: original.count)
+        #expect(settings.orderedProviders().last == original.first)
+    }
+
+    @Test
+    @MainActor
+    func `settings pane titles cover app panes and providers`() {
+        #expect(SettingsPane.general.title == L("tab_general"))
+        #expect(SettingsPane.about.title == L("tab_about"))
+        #expect(!SettingsPane.provider(.codex).title.isEmpty)
+        #expect(SettingsPane.provider(.codex) != SettingsPane.provider(.claude))
+    }
+
+    @Test
+    func `copilot menu card preview follows budget extras setting`() {
+        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-copilot-budget-preview")
+        let store = Self.makeUsageStore(settings: settings)
+        let budgetTitle = "Budget - Copilot Agent Premium Requests"
+        store._setSnapshotForTesting(
+            UsageSnapshot(
+                primary: RateWindow(usedPercent: 20, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
+                secondary: RateWindow(usedPercent: 30, windowMinutes: nil, resetsAt: nil, resetDescription: nil),
+                extraRateWindows: [
+                    NamedRateWindow(
+                        id: "copilot-budget-agent",
+                        title: budgetTitle,
+                        window: RateWindow(
+                            usedPercent: 65,
+                            windowMinutes: nil,
+                            resetsAt: nil,
+                            resetDescription: nil)),
+                ],
+                updatedAt: Date()),
+            provider: .copilot)
+        let pane = ProvidersPane(settings: settings, store: store)
+
+        #expect(!pane._test_menuCardModel(for: .copilot).metrics.map(\.title).contains(budgetTitle))
+
+        settings.copilotBudgetExtrasEnabled = true
+        #expect(pane._test_menuCardModel(for: .copilot).metrics.map(\.title).contains(budgetTitle))
     }
 
     @Test
@@ -101,7 +232,7 @@ struct ProvidersPaneCoverageTests {
     }
 
     @Test
-    func `mistral menu bar metric picker shows spend only copy`() {
+    func `mistral menu bar metric picker shows payg and monthly plan options`() {
         Self.withEnglishLocalization {
             let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-mistral-picker")
             let store = Self.makeUsageStore(settings: settings)
@@ -110,8 +241,11 @@ struct ProvidersPaneCoverageTests {
             let picker = pane._test_menuBarMetricPicker(for: .mistral)
             #expect(picker?.options.map(\.id) == [
                 MenuBarMetricPreference.automatic.rawValue,
+                MenuBarMetricPreference.monthlyPlan.rawValue,
             ])
-            #expect(picker?.subtitle == "Shows current-month Mistral API spend in the menu bar.")
+            #expect(picker?.options.first?.title == "Pay-as-you-go")
+            #expect(picker?.options.last?.title == "Monthly Plan")
+            #expect(picker?.subtitle == "Choose Mistral API spend or Monthly Plan usage for the menu bar.")
         }
     }
 
@@ -127,6 +261,27 @@ struct ProvidersPaneCoverageTests {
                 MenuBarMetricPreference.automatic.rawValue,
             ])
             #expect(picker?.subtitle == "Shows Kimi K2 API-key credits in the menu bar.")
+        }
+    }
+
+    @Test
+    func `kimi menu bar metric picker preserves stored lane labels`() {
+        Self.withEnglishLocalization {
+            let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-kimi-picker")
+            let store = Self.makeUsageStore(settings: settings)
+            let pane = ProvidersPane(settings: settings, store: store)
+
+            let picker = pane._test_menuBarMetricPicker(for: .kimi)
+            #expect(picker?.options.map(\.id) == [
+                MenuBarMetricPreference.automatic.rawValue,
+                MenuBarMetricPreference.primary.rawValue,
+                MenuBarMetricPreference.secondary.rawValue,
+            ])
+            #expect(picker?.options.map(\.title) == [
+                "Automatic",
+                "Primary (Weekly)",
+                "Secondary (Rate Limit)",
+            ])
         }
     }
 
@@ -231,6 +386,17 @@ struct ProvidersPaneCoverageTests {
     }
 
     @Test
+    func `claude menu bar metric picker includes session plus weekly lane`() {
+        let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-claude-session-weekly-picker")
+        let store = Self.makeUsageStore(settings: settings)
+        let pane = ProvidersPane(settings: settings, store: store)
+
+        let picker = pane._test_menuBarMetricPicker(for: .claude)
+        let ids = picker?.options.map(\.id) ?? []
+        #expect(ids.contains(MenuBarMetricPreference.primaryAndSecondary.rawValue))
+    }
+
+    @Test
     func `zai menu bar metric picker omits tertiary lane when snapshot has no 5-hour metric`() {
         let settings = Self.makeSettingsStore(suite: "ProvidersPaneCoverageTests-zai-no-tertiary-picker")
         let store = Self.makeUsageStore(settings: settings)
@@ -306,6 +472,41 @@ struct ProvidersPaneCoverageTests {
             #expect(row?.label == "Plan")
             #expect(row?.value == "Pro")
         }
+    }
+
+    @Test
+    func `provider detail renders metric status without progress`() {
+        let metric = UsageMenuCardView.Model.Metric(
+            id: "fixture",
+            title: "Example quota",
+            percent: 0,
+            percentStyle: .left,
+            statusText: "Unavailable",
+            resetText: nil,
+            detailText: nil,
+            detailLeftText: nil,
+            detailRightText: nil,
+            pacePercent: nil,
+            paceOnTop: false)
+
+        #expect(ProviderDetailView<EmptyView>.metricInlinePresentation(metric) == .status("Unavailable"))
+    }
+
+    @Test
+    func `provider detail renders ordinary metric progress`() {
+        let metric = UsageMenuCardView.Model.Metric(
+            id: "fixture",
+            title: "Example quota",
+            percent: 50,
+            percentStyle: .left,
+            resetText: nil,
+            detailText: nil,
+            detailLeftText: nil,
+            detailRightText: nil,
+            pacePercent: nil,
+            paceOnTop: false)
+
+        #expect(ProviderDetailView<EmptyView>.metricInlinePresentation(metric) == .progress)
     }
 
     @Test

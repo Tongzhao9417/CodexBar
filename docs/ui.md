@@ -24,10 +24,13 @@ read_when:
 - Loading animation runs at a bounded frame rate and has a hard continuous-duration ceiling so provider hangs cannot keep
   the menu bar redrawing forever.
 - Display → Menu bar: menu bar can show provider branding icons with a percent label instead of critter bars.
+- Providers → Codex → Menu bar metric can combine the session-window and weekly percentages in one compact label.
 
 ## Menu card
 - Provider-specific rows with resets (countdown by default; optional absolute clock display). Primary, secondary,
   tertiary, and extra windows render when the provider snapshot has data for them.
+- Manual refresh updates the open card subtitle and persistent Refresh-row spinner in place. Repeated clicks share the
+  active request, and the existing row geometry remains fixed through success or failure.
 - Codex credits can add a separate “Buy Credits…” menu action.
 - Codex OpenAI web extras: code review remaining and usage breakdown render when dashboard data is attached.
 - Token accounts: optional account switcher bar or stacked account cards (up to 6) when multiple manual tokens exist.
@@ -53,8 +56,8 @@ window has elapsed.
   reports sizes and cleanup ideas, it does not delete files.
 - Display: “Overview tab providers” controls which providers appear in Merge Icons → Overview (up to 3).
 - If no providers are selected for Overview, the Overview tab is hidden.
-- Providers → Claude: “Avoid Keychain prompts” uses the prompt-free Security CLI reader when available.
-- The lower-level “Keychain prompt policy” picker only appears when the Security.framework reader is active.
+- Providers → Claude: “Avoid Keychain prompts” selects the Security.framework reader's `Never prompt` policy.
+- The lower-level “Keychain prompt policy” picker remains visible as the source of truth for Claude OAuth prompts.
 
 ## Widgets (high level)
 - Widgets render shared usage snapshots for the supported widget families and

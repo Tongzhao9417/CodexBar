@@ -8,7 +8,7 @@ private let mistralCookieImportOrder: BrowserCookieImportOrder =
 
 public enum MistralCookieImporter {
     private static let cookieClient = BrowserCookieClient()
-    private static let cookieDomains = ["mistral.ai", "admin.mistral.ai", "auth.mistral.ai"]
+    static let cookieDomains = ["mistral.ai", "admin.mistral.ai", "auth.mistral.ai", "console.mistral.ai"]
 
     public struct SessionInfo: Sendable {
         public let cookies: [HTTPCookie]
@@ -47,7 +47,7 @@ public enum MistralCookieImporter {
         for browserSource in installedBrowsers {
             do {
                 let query = BrowserCookieQuery(domains: self.cookieDomains)
-                let sources = try Self.cookieClient.records(
+                let sources = try Self.cookieClient.codexBarRecords(
                     matching: query,
                     in: browserSource,
                     logger: log)

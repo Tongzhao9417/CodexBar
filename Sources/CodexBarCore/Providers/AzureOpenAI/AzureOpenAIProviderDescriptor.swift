@@ -1,9 +1,8 @@
-import CodexBarMacroSupport
 import Foundation
 
-@ProviderDescriptorRegistration
-@ProviderDescriptorDefinition
 public enum AzureOpenAIProviderDescriptor {
+    public static let descriptor: ProviderDescriptor = Self.makeDescriptor()
+
     static func makeDescriptor() -> ProviderDescriptor {
         ProviderDescriptor(
             id: .azureopenai,
@@ -57,6 +56,7 @@ struct AzureOpenAIAPIFetchStrategy: ProviderFetchStrategy {
         guard let apiKey = Self.resolveAPIKey(environment: context.env) else {
             throw AzureOpenAIUsageError.missingAPIKey
         }
+        try AzureOpenAISettingsReader.validateEndpointOverrides(environment: context.env)
         guard let endpoint = Self.resolveEndpoint(environment: context.env) else {
             throw AzureOpenAIUsageError.missingEndpoint
         }

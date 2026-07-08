@@ -41,7 +41,9 @@ extension SettingsStore {
         label: String,
         token: String,
         externalIdentifier: String? = nil,
-        organizationID: String? = nil)
+        usageScope: String? = nil,
+        organizationID: String? = nil,
+        workspaceID: String? = nil)
     {
         guard TokenAccountSupportCatalog.support(for: provider) != nil else { return }
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -49,8 +51,12 @@ extension SettingsStore {
         let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedIdentifier = externalIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalisedIdentifier = (trimmedIdentifier?.isEmpty ?? true) ? nil : trimmedIdentifier
+        let trimmedUsageScope = usageScope?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalisedUsageScope = (trimmedUsageScope?.isEmpty ?? true) ? nil : trimmedUsageScope
         let trimmedOrganizationID = organizationID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalisedOrganizationID = (trimmedOrganizationID?.isEmpty ?? true) ? nil : trimmedOrganizationID
+        let trimmedWorkspaceID = workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalisedWorkspaceID = (trimmedWorkspaceID?.isEmpty ?? true) ? nil : trimmedWorkspaceID
         let existing = self.tokenAccountsData(for: provider)
         let accounts = existing?.accounts ?? []
         let fallbackLabel = trimmedLabel.isEmpty ? "Account \(accounts.count + 1)" : trimmedLabel
@@ -61,7 +67,9 @@ extension SettingsStore {
             addedAt: Date().timeIntervalSince1970,
             lastUsed: nil,
             externalIdentifier: normalisedIdentifier,
-            organizationID: normalisedOrganizationID)
+            usageScope: normalisedUsageScope,
+            organizationID: normalisedOrganizationID,
+            workspaceID: normalisedWorkspaceID)
         let updated = ProviderTokenAccountData(
             version: existing?.version ?? 1,
             accounts: accounts + [account],
@@ -87,7 +95,9 @@ extension SettingsStore {
         label: String? = nil,
         token: String? = nil,
         externalIdentifier: String?? = nil,
-        organizationID: String?? = nil)
+        usageScope: String?? = nil,
+        organizationID: String?? = nil,
+        workspaceID: String?? = nil)
     {
         guard let data = self.tokenAccountsData(for: provider), !data.accounts.isEmpty else { return }
         guard let index = data.accounts.firstIndex(where: { $0.id == accountID }) else { return }
@@ -104,12 +114,26 @@ extension SettingsStore {
         } else {
             resolvedIdentifier = existing.externalIdentifier
         }
+        let resolvedUsageScope: String?
+        if let usageScope {
+            let trimmed = usageScope?.trimmingCharacters(in: .whitespacesAndNewlines)
+            resolvedUsageScope = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        } else {
+            resolvedUsageScope = existing.usageScope
+        }
         let resolvedOrganizationID: String?
         if let organizationID {
             let trimmed = organizationID?.trimmingCharacters(in: .whitespacesAndNewlines)
             resolvedOrganizationID = (trimmed?.isEmpty ?? true) ? nil : trimmed
         } else {
             resolvedOrganizationID = existing.organizationID
+        }
+        let resolvedWorkspaceID: String?
+        if let workspaceID {
+            let trimmed = workspaceID?.trimmingCharacters(in: .whitespacesAndNewlines)
+            resolvedWorkspaceID = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        } else {
+            resolvedWorkspaceID = existing.workspaceID
         }
         let updatedAccount = ProviderTokenAccount(
             id: existing.id,
@@ -118,7 +142,9 @@ extension SettingsStore {
             addedAt: existing.addedAt,
             lastUsed: existing.lastUsed,
             externalIdentifier: resolvedIdentifier,
-            organizationID: resolvedOrganizationID)
+            usageScope: resolvedUsageScope,
+            organizationID: resolvedOrganizationID,
+            workspaceID: resolvedWorkspaceID)
 
         var accounts = data.accounts
         accounts[index] = updatedAccount
@@ -145,6 +171,7 @@ extension SettingsStore {
         guard let data = self.tokenAccountsData(for: provider), !data.accounts.isEmpty else { return }
         let activeAccountID = data.accounts[data.clampedActiveIndex()].id
         guard let removedIndex = data.accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        let removedAccount = data.accounts[removedIndex]
         let filtered = data.accounts.filter { $0.id != accountID }
         self.updateProviderConfig(provider: provider) { entry in
             if filtered.isEmpty {
@@ -166,6 +193,10 @@ extension SettingsStore {
                 entry.apiKey = nil
             }
         }
+        self.applyTokenAccountRemovalSideEffectsIfNeeded(
+            provider: provider,
+            removedAccount: removedAccount,
+            remainingAccounts: filtered)
         CodexBarLog.logger(LogCategories.tokenAccounts).info(
             "Token account removed",
             metadata: [
@@ -211,5 +242,112 @@ extension SettingsStore {
               support.requiresManualCookieSource
         else { return }
         ProviderCatalog.implementation(for: provider)?.applyTokenAccountCookieSource(settings: self)
+    }
+
+    private func applyTokenAccountRemovalSideEffectsIfNeeded(
+        provider: UsageProvider,
+        removedAccount: ProviderTokenAccount,
+        remainingAccounts: [ProviderTokenAccount])
+    {
+        guard provider == .antigravity else { return }
+        guard let removedCredentials = AntigravityOAuthCredentialsStore.credentials(
+            fromTokenAccountValue: removedAccount.token)
+        else {
+            return
+        }
+        let hasMatchingRemainingAccount = remainingAccounts.contains { account in
+            guard let credentials = AntigravityOAuthCredentialsStore.credentials(fromTokenAccountValue: account.token)
+            else {
+                return false
+            }
+            return Self.antigravityCredentialsMatchAccount(credentials, removedCredentials)
+        }
+        guard !hasMatchingRemainingAccount else { return }
+
+        Self.clearMatchingAntigravitySharedCredentials(
+            store: self.antigravityOAuthCredentialsStore,
+            removedCredentials: removedCredentials)
+    }
+
+    private nonisolated static func clearMatchingAntigravitySharedCredentials(
+        store: AntigravityOAuthCredentialsStore,
+        removedCredentials: AntigravityOAuthCredentials)
+    {
+        do {
+            try store.deleteIfPresent { sharedCredentials in
+                self.antigravitySharedCredentialsMatchRemovedAccount(
+                    sharedCredentials,
+                    removedCredentials)
+            }
+        } catch {
+            CodexBarLog.logger(LogCategories.tokenAccounts).warning(
+                "Failed to clear Antigravity OAuth cache after account removal",
+                metadata: ["error": error.localizedDescription])
+        }
+    }
+
+    private nonisolated static func antigravitySharedCredentialsMatchRemovedAccount(
+        _ shared: AntigravityOAuthCredentials,
+        _ removed: AntigravityOAuthCredentials) -> Bool
+    {
+        if let sharedRefreshToken = self.normalizedAntigravityCredentialToken(shared.refreshToken),
+           let removedRefreshToken = self.normalizedAntigravityCredentialToken(removed.refreshToken)
+        {
+            return sharedRefreshToken == removedRefreshToken
+        }
+        if let sharedAccessToken = self.normalizedAntigravityCredentialToken(shared.accessToken),
+           let removedAccessToken = self.normalizedAntigravityCredentialToken(removed.accessToken)
+        {
+            return sharedAccessToken == removedAccessToken
+        }
+        guard self.normalizedAntigravityCredentialToken(shared.refreshToken) == nil,
+              self.normalizedAntigravityCredentialToken(removed.refreshToken) == nil,
+              self.normalizedAntigravityCredentialToken(shared.accessToken) == nil,
+              self.normalizedAntigravityCredentialToken(removed.accessToken) == nil
+        else {
+            return false
+        }
+        return self.normalizedAntigravityAccountEmail(shared.resolvedAccountEmail)
+            == self.normalizedAntigravityAccountEmail(removed.resolvedAccountEmail)
+    }
+
+    private nonisolated static func antigravityCredentialsMatchAccount(
+        _ lhs: AntigravityOAuthCredentials,
+        _ rhs: AntigravityOAuthCredentials) -> Bool
+    {
+        if let lhsEmail = self.normalizedAntigravityAccountEmail(lhs.resolvedAccountEmail),
+           let rhsEmail = self.normalizedAntigravityAccountEmail(rhs.resolvedAccountEmail)
+        {
+            return lhsEmail == rhsEmail
+        }
+        if let lhsRefreshToken = self.normalizedAntigravityCredentialToken(lhs.refreshToken),
+           let rhsRefreshToken = self.normalizedAntigravityCredentialToken(rhs.refreshToken)
+        {
+            return lhsRefreshToken == rhsRefreshToken
+        }
+        if let lhsAccessToken = self.normalizedAntigravityCredentialToken(lhs.accessToken),
+           let rhsAccessToken = self.normalizedAntigravityCredentialToken(rhs.accessToken)
+        {
+            return lhsAccessToken == rhsAccessToken
+        }
+        return false
+    }
+
+    private nonisolated static func normalizedAntigravityAccountEmail(_ email: String?) -> String? {
+        guard let value = email?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !value.isEmpty
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private nonisolated static func normalizedAntigravityCredentialToken(_ token: String?) -> String? {
+        guard let value = token?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            return nil
+        }
+        return value
     }
 }

@@ -91,6 +91,10 @@ struct TokenAccountCLIContext {
         codexActiveSourceOverride: CodexActiveSource? = nil) -> ProviderSettingsSnapshot?
     {
         let config = self.providerConfig(for: provider)
+        if provider == .qoder {
+            let settings = self.cookieSettings(provider: provider, account: account, config: config)
+            return self.makeSnapshot(qoder: self.makeProviderCookieSettings(settings))
+        }
         if let snapshot = self.makeCookieBackedSnapshot(provider: provider, account: account, config: config) {
             return snapshot
         }
@@ -121,7 +125,10 @@ struct TokenAccountCLIContext {
                     organizationID: account?.sanitizedOrganizationID))
         case .zai:
             return self.makeSnapshot(
-                zai: ProviderSettingsSnapshot.ZaiProviderSettings(apiRegion: self.resolveZaiRegion(config)))
+                zai: ProviderSettingsSnapshot.ZaiProviderSettings(
+                    apiRegion: self.resolveZaiRegion(config),
+                    usageScope: Self.zaiUsageScope(for: account),
+                    teamContext: Self.zaiTeamContext(for: account)))
         case .moonshot:
             return self.makeSnapshot(
                 moonshot: ProviderSettingsSnapshot.MoonshotProviderSettings(
@@ -145,101 +152,75 @@ struct TokenAccountCLIContext {
         account: ProviderTokenAccount?,
         config: ProviderConfig?) -> ProviderSettingsSnapshot?
     {
-        let cookieHeader = self.manualCookieHeader(provider: provider, account: account, config: config)
-        let cookieSource = self.cookieSource(provider: provider, account: account, config: config)
+        let cookieSettings = self.cookieSettings(provider: provider, account: account, config: config)
 
         switch provider {
         case .cursor:
-            return self.makeSnapshot(
-                cursor: ProviderSettingsSnapshot.CursorProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(cursor: self.makeProviderCookieSettings(cookieSettings))
         case .opencode:
             return self.makeSnapshot(
                 opencode: ProviderSettingsSnapshot.OpenCodeProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader,
+                    cookieSource: cookieSettings.cookieSource,
+                    manualCookieHeader: cookieSettings.manualCookieHeader,
                     workspaceID: config?.workspaceID))
         case .opencodego:
             return self.makeSnapshot(
                 opencodego: ProviderSettingsSnapshot.OpenCodeProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader,
+                    cookieSource: cookieSettings.cookieSource,
+                    manualCookieHeader: cookieSettings.manualCookieHeader,
                     workspaceID: config?.workspaceID))
+        case .commandcode:
+            return self.makeSnapshot(commandcode: self.makeProviderCookieSettings(cookieSettings))
         case .alibaba:
             return self.makeSnapshot(
                 alibaba: ProviderSettingsSnapshot.AlibabaCodingPlanProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader,
+                    cookieSource: cookieSettings.cookieSource,
+                    manualCookieHeader: cookieSettings.manualCookieHeader,
                     apiRegion: self.resolveAlibabaCodingPlanRegion(config)))
         case .alibabatokenplan:
             return self.makeSnapshot(
                 alibabaTokenPlan: ProviderSettingsSnapshot.AlibabaTokenPlanProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+                    cookieSource: cookieSettings.cookieSource,
+                    manualCookieHeader: cookieSettings.manualCookieHeader,
+                    apiRegion: self.resolveAlibabaTokenPlanRegion(config)))
         case .factory:
-            return self.makeSnapshot(
-                factory: ProviderSettingsSnapshot.FactoryProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(factory: self.makeProviderCookieSettings(cookieSettings))
         case .minimax:
             return self.makeSnapshot(
                 minimax: ProviderSettingsSnapshot.MiniMaxProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader,
+                    cookieSource: cookieSettings.cookieSource,
+                    manualCookieHeader: cookieSettings.manualCookieHeader,
                     apiRegion: self.resolveMiniMaxRegion(config)))
         case .manus:
-            return self.makeSnapshot(
-                manus: ProviderSettingsSnapshot.ManusProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(manus: self.makeProviderCookieSettings(cookieSettings))
         case .augment:
-            return self.makeSnapshot(
-                augment: ProviderSettingsSnapshot.AugmentProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(augment: self.makeProviderCookieSettings(cookieSettings))
         case .amp:
-            return self.makeSnapshot(
-                amp: ProviderSettingsSnapshot.AmpProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(amp: self.makeProviderCookieSettings(cookieSettings))
         case .ollama:
-            return self.makeSnapshot(
-                ollama: ProviderSettingsSnapshot.OllamaProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(ollama: self.makeProviderCookieSettings(cookieSettings))
         case .kimi:
-            return self.makeSnapshot(
-                kimi: ProviderSettingsSnapshot.KimiProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(kimi: self.makeProviderCookieSettings(cookieSettings))
         case .perplexity:
-            return self.makeSnapshot(
-                perplexity: ProviderSettingsSnapshot.PerplexityProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(perplexity: self.makeProviderCookieSettings(cookieSettings))
         case .mimo:
-            return self.makeSnapshot(
-                mimo: ProviderSettingsSnapshot.MiMoProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(mimo: self.makeProviderCookieSettings(cookieSettings))
         case .doubao:
             return nil
         case .abacus:
-            return self.makeSnapshot(
-                abacus: ProviderSettingsSnapshot.AbacusProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(abacus: self.makeProviderCookieSettings(cookieSettings))
         case .mistral:
-            return self.makeSnapshot(
-                mistral: ProviderSettingsSnapshot.MistralProviderSettings(
-                    cookieSource: cookieSource,
-                    manualCookieHeader: cookieHeader))
+            return self.makeSnapshot(mistral: self.makeProviderCookieSettings(cookieSettings))
         case .stepfun:
+            let stepfunSettings = self.cookieSettings(
+                provider: provider,
+                account: account,
+                config: config,
+                configuredHeader: config?.sanitizedRegion ?? config?.sanitizedCookieHeader)
             return self.makeSnapshot(
                 stepfun: ProviderSettingsSnapshot.StepFunProviderSettings(
-                    cookieSource: cookieSource,
-                    manualToken: self.stepfunManualToken(account: account, config: config),
+                    cookieSource: stepfunSettings.cookieSource,
+                    manualToken: stepfunSettings.manualCookieHeader ?? "",
                     username: config?.sanitizedAPIKey ?? "",
                     password: ""))
         default:
@@ -264,12 +245,14 @@ struct TokenAccountCLIContext {
         kimi: ProviderSettingsSnapshot.KimiProviderSettings? = nil,
         augment: ProviderSettingsSnapshot.AugmentProviderSettings? = nil,
         amp: ProviderSettingsSnapshot.AmpProviderSettings? = nil,
+        commandcode: ProviderSettingsSnapshot.CommandCodeProviderSettings? = nil,
         ollama: ProviderSettingsSnapshot.OllamaProviderSettings? = nil,
         jetbrains: ProviderSettingsSnapshot.JetBrainsProviderSettings? = nil,
         perplexity: ProviderSettingsSnapshot.PerplexityProviderSettings? = nil,
         mimo: ProviderSettingsSnapshot.MiMoProviderSettings? = nil,
         abacus: ProviderSettingsSnapshot.AbacusProviderSettings? = nil,
         mistral: ProviderSettingsSnapshot.MistralProviderSettings? = nil,
+        qoder: ProviderSettingsSnapshot.QoderProviderSettings? = nil,
         stepfun: ProviderSettingsSnapshot.StepFunProviderSettings? = nil) -> ProviderSettingsSnapshot
     {
         ProviderSettingsSnapshot.make(
@@ -289,12 +272,14 @@ struct TokenAccountCLIContext {
             augment: augment,
             moonshot: moonshot,
             amp: amp,
+            commandcode: commandcode,
             ollama: ollama,
             jetbrains: jetbrains,
             perplexity: perplexity,
             mimo: mimo,
             abacus: abacus,
             mistral: mistral,
+            qoder: qoder,
             stepfun: stepfun)
     }
 
@@ -322,26 +307,15 @@ struct TokenAccountCLIContext {
         codexActiveSourceOverride: CodexActiveSource? = nil) -> [String: String]
     {
         let providerConfig = self.providerConfig(for: provider)
-        var env = ProviderConfigEnvironment.applyAPIKeyOverride(
+        var env = ProviderEnvironmentResolver.resolve(
             base: base,
             provider: provider,
-            config: providerConfig)
-        // If token account is selected, use its token instead of config's apiKey
-        if let account {
-            TokenAccountSupportCatalog.scrubEnvironmentForSelectedAccount(
-                &env,
-                provider: provider,
-                token: account.token)
-            if let override = TokenAccountSupportCatalog.envOverride(for: provider, token: account.token) {
-                for (key, value) in override {
-                    env[key] = value
-                }
-            }
-        }
+            config: providerConfig,
+            selectedAccount: account)
         if provider == .codex,
-           let managedAccount = self.managedCodexAccount(for: codexActiveSourceOverride)
+           let codexHomePath = self.codexHomePath(for: codexActiveSourceOverride)
         {
-            env = CodexHomeScope.scopedEnvironment(base: env, codexHome: managedAccount.managedHomePath)
+            env = CodexHomeScope.scopedEnvironment(base: env, codexHome: codexHomePath)
         }
         return env
     }
@@ -399,7 +373,9 @@ struct TokenAccountCLIContext {
             addedAt: existing.addedAt,
             lastUsed: existing.lastUsed,
             externalIdentifier: existing.externalIdentifier,
-            organizationID: existing.organizationID)
+            usageScope: existing.usageScope,
+            organizationID: existing.organizationID,
+            workspaceID: existing.workspaceID)
         providerConfig.tokenAccounts = ProviderTokenAccountData(
             version: data.version,
             accounts: accounts,
@@ -503,12 +479,13 @@ struct TokenAccountCLIContext {
             storeLoader: storeLoader,
             activeSource: activeSource ?? self.providerConfig(for: .codex)?.codexActiveSource ?? .liveSystem,
             baseEnvironment: self.baseEnvironment,
+            profileHomePaths: self.providerConfig(for: .codex)?.codexProfileHomePaths ?? [],
             managedEnvironmentBuilder: { environment, account in
                 CodexHomeScope.scopedEnvironment(base: environment, codexHome: account.managedHomePath)
             })
     }
 
-    private func managedCodexAccount(for activeSourceOverride: CodexActiveSource?) -> ManagedCodexAccount? {
+    private func codexHomePath(for activeSourceOverride: CodexActiveSource?) -> String? {
         let activeSource: CodexActiveSource = if let activeSourceOverride {
             activeSourceOverride
         } else {
@@ -516,13 +493,23 @@ struct TokenAccountCLIContext {
                 .resolvedSource
         }
 
-        guard case let .managedAccount(id) = activeSource else { return nil }
-        let accounts: ManagedCodexAccountSet? = if let managedCodexAccountStoreURL {
-            try? FileManagedCodexAccountStore(fileURL: managedCodexAccountStoreURL).loadAccounts()
-        } else {
-            try? FileManagedCodexAccountStore().loadAccounts()
+        switch activeSource {
+        case .liveSystem:
+            return nil
+        case let .managedAccount(id):
+            let accounts: ManagedCodexAccountSet? = if let managedCodexAccountStoreURL {
+                try? FileManagedCodexAccountStore(fileURL: managedCodexAccountStoreURL).loadAccounts()
+            } else {
+                try? FileManagedCodexAccountStore().loadAccounts()
+            }
+            return accounts?.account(id: id)?.managedHomePath
+        case let .profileHome(path):
+            guard let normalizedPath = CodexHomeScope.normalizedHomePath(path) else { return nil }
+            let configuredPaths = self.providerConfig(for: .codex)?.codexProfileHomePaths ?? []
+            return configuredPaths.contains {
+                CodexHomeScope.normalizedHomePath($0) == normalizedPath
+            } ? normalizedPath : nil
         }
-        return accounts?.account(id: id)
     }
 
     private func manualCookieHeader(
@@ -530,14 +517,7 @@ struct TokenAccountCLIContext {
         account: ProviderTokenAccount?,
         config: ProviderConfig?) -> String?
     {
-        if let account,
-           let support = TokenAccountSupportCatalog.support(for: provider),
-           case .cookieHeader = support.injection
-        {
-            let header = TokenAccountSupportCatalog.normalizedCookieHeader(account.token, support: support)
-            return header.isEmpty ? nil : header
-        }
-        return config?.sanitizedCookieHeader
+        self.cookieSettings(provider: provider, account: account, config: config).manualCookieHeader
     }
 
     private func cookieSource(
@@ -545,26 +525,37 @@ struct TokenAccountCLIContext {
         account: ProviderTokenAccount?,
         config: ProviderConfig?) -> ProviderCookieSource
     {
-        if account != nil, TokenAccountSupportCatalog.support(for: provider)?.requiresManualCookieSource == true {
-            return .manual
-        }
-        if let override = config?.cookieSource { return override }
-        if provider == .stepfun, config?.sanitizedRegion != nil {
-            return .manual
-        }
-        if config?.sanitizedCookieHeader != nil {
-            return .manual
-        }
-        return .auto
+        self.cookieSettings(provider: provider, account: account, config: config).cookieSource
     }
 
-    private func stepfunManualToken(account: ProviderTokenAccount?, config: ProviderConfig?) -> String {
-        if let account,
-           let support = TokenAccountSupportCatalog.support(for: .stepfun)
-        {
-            return TokenAccountSupportCatalog.normalizedCookieHeader(account.token, support: support)
+    private func cookieSettings(
+        provider: UsageProvider,
+        account: ProviderTokenAccount?,
+        config: ProviderConfig?,
+        configuredHeader: String? = nil) -> ProviderSettingsSnapshot.CookieProviderSettings
+    {
+        let configuredSource: ProviderCookieSource = if let override = config?.cookieSource {
+            override
+        } else if provider == .stepfun, config?.sanitizedRegion != nil {
+            .manual
+        } else if config?.sanitizedCookieHeader != nil {
+            .manual
+        } else {
+            .auto
         }
-        return config?.sanitizedRegion ?? config?.sanitizedCookieHeader ?? ""
+        return ProviderCookieSettingsResolver.resolve(
+            provider: provider,
+            configuredSource: configuredSource,
+            configuredHeader: configuredHeader ?? config?.sanitizedCookieHeader,
+            selectedAccount: account)
+    }
+
+    private func makeProviderCookieSettings<Settings: ProviderCookieSettings>(
+        _ resolved: ProviderSettingsSnapshot.CookieProviderSettings) -> Settings
+    {
+        Settings(
+            cookieSource: resolved.cookieSource,
+            manualCookieHeader: resolved.manualCookieHeader)
     }
 
     private func resolveZaiRegion(_ config: ProviderConfig?) -> ZaiAPIRegion {
@@ -574,6 +565,22 @@ struct TokenAccountCLIContext {
             return .global
         }
         return ZaiAPIRegion(rawValue: raw) ?? .global
+    }
+
+    private static func zaiUsageScope(for account: ProviderTokenAccount?) -> ZaiUsageScope {
+        guard let raw = account?.sanitizedUsageScope?.lowercased(),
+              let scope = ZaiUsageScope(rawValue: raw)
+        else {
+            return .personal
+        }
+        return scope
+    }
+
+    private static func zaiTeamContext(for account: ProviderTokenAccount?) -> ZaiBigModelTeamContext? {
+        guard self.zaiUsageScope(for: account) == .team else { return nil }
+        return ZaiBigModelTeamContext(
+            organizationID: account?.sanitizedOrganizationID,
+            projectID: account?.sanitizedWorkspaceID)
     }
 
     private func resolveMiniMaxRegion(_ config: ProviderConfig?) -> MiniMaxAPIRegion {
@@ -601,6 +608,15 @@ struct TokenAccountCLIContext {
             return .international
         }
         return AlibabaCodingPlanAPIRegion(rawValue: raw) ?? .international
+    }
+
+    private func resolveAlibabaTokenPlanRegion(_ config: ProviderConfig?) -> AlibabaTokenPlanAPIRegion {
+        guard let raw = config?.region?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty
+        else {
+            return .chinaMainland
+        }
+        return AlibabaTokenPlanAPIRegion(rawValue: raw) ?? .chinaMainland
     }
 
     private static func kiloUsageDataSource(from source: ProviderSourceMode?) -> KiloUsageDataSource {

@@ -15,11 +15,33 @@ public struct CodexBarConfig: Codable, Sendable {
         metadata: [UsageProvider: ProviderMetadata] = ProviderDescriptorRegistry.metadata) -> CodexBarConfig
     {
         let providers = UsageProvider.allCases.map { provider in
-            ProviderConfig(
-                id: provider,
-                enabled: metadata[provider]?.defaultEnabled)
+            Self.defaultProviderConfig(
+                provider,
+                metadata: metadata,
+                alibabaTokenPlanRegion: .international)
         }
         return CodexBarConfig(version: Self.currentVersion, providers: providers)
+    }
+
+    /// Alphabetical provider ordering with enabled providers on top: enabled first, then disabled,
+    /// each group sorted case-insensitively by display name. Used by the Providers settings pane's
+    /// alphabetical sort toggle; it never mutates the user's stored manual order.
+    public static func alphabeticalProviderOrder(
+        metadata: [UsageProvider: ProviderMetadata] = ProviderDescriptorRegistry.metadata,
+        enablement: (UsageProvider) -> Bool) -> [UsageProvider]
+    {
+        UsageProvider.allCases.sorted { lhs, rhs in
+            let lhsEnabled = enablement(lhs)
+            let rhsEnabled = enablement(rhs)
+            if lhsEnabled != rhsEnabled { return lhsEnabled }
+            let lhsName = metadata[lhs]?.displayName ?? lhs.rawValue
+            let rhsName = metadata[rhs]?.displayName ?? rhs.rawValue
+            switch lhsName.localizedCaseInsensitiveCompare(rhsName) {
+            case .orderedAscending: return true
+            case .orderedDescending: return false
+            case .orderedSame: return lhs.rawValue < rhs.rawValue
+            }
+        }
     }
 
     public func normalized(
@@ -36,9 +58,10 @@ public struct CodexBarConfig: Codable, Sendable {
         }
 
         for provider in UsageProvider.allCases where !seen.contains(provider) {
-            normalized.append(ProviderConfig(
-                id: provider,
-                enabled: metadata[provider]?.defaultEnabled))
+            normalized.append(Self.defaultProviderConfig(
+                provider,
+                metadata: metadata,
+                alibabaTokenPlanRegion: .chinaMainland))
         }
 
         return CodexBarConfig(
@@ -70,6 +93,17 @@ public struct CodexBarConfig: Codable, Sendable {
             self.providers.append(config)
         }
     }
+
+    private static func defaultProviderConfig(
+        _ provider: UsageProvider,
+        metadata: [UsageProvider: ProviderMetadata],
+        alibabaTokenPlanRegion: AlibabaTokenPlanAPIRegion) -> ProviderConfig
+    {
+        ProviderConfig(
+            id: provider,
+            enabled: metadata[provider]?.defaultEnabled,
+            region: provider == .alibabatokenplan ? alibabaTokenPlanRegion.rawValue : nil)
+    }
 }
 
 public struct ProviderConfig: Codable, Sendable, Identifiable {
@@ -85,7 +119,10 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
     public var workspaceID: String?
     public var enterpriseHost: String?
     public var tokenAccounts: ProviderTokenAccountData?
+    public var claudeSwapEnabled: Bool?
+    public var claudeSwapExecutablePath: String?
     public var codexActiveSource: CodexActiveSource?
+    public var codexProfileHomePaths: [String]?
     public var quotaWarnings: QuotaWarningConfig?
     public var kiloKnownOrganizations: [KiloOrganization]?
     public var kiloEnabledOrganizationIDs: [String]?
@@ -105,7 +142,10 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
         workspaceID: String? = nil,
         enterpriseHost: String? = nil,
         tokenAccounts: ProviderTokenAccountData? = nil,
+        claudeSwapEnabled: Bool? = nil,
+        claudeSwapExecutablePath: String? = nil,
         codexActiveSource: CodexActiveSource? = nil,
+        codexProfileHomePaths: [String]? = nil,
         quotaWarnings: QuotaWarningConfig? = nil,
         kiloKnownOrganizations: [KiloOrganization]? = nil,
         kiloEnabledOrganizationIDs: [String]? = nil,
@@ -124,7 +164,10 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
         self.workspaceID = workspaceID
         self.enterpriseHost = enterpriseHost
         self.tokenAccounts = tokenAccounts
+        self.claudeSwapEnabled = claudeSwapEnabled
+        self.claudeSwapExecutablePath = claudeSwapExecutablePath
         self.codexActiveSource = codexActiveSource
+        self.codexProfileHomePaths = codexProfileHomePaths
         self.quotaWarnings = quotaWarnings
         self.kiloKnownOrganizations = kiloKnownOrganizations
         self.kiloEnabledOrganizationIDs = kiloEnabledOrganizationIDs
@@ -154,6 +197,10 @@ public struct ProviderConfig: Codable, Sendable, Identifiable {
 
     public var sanitizedEnterpriseHost: String? {
         Self.clean(self.enterpriseHost)
+    }
+
+    public var sanitizedClaudeSwapExecutablePath: String? {
+        Self.clean(self.claudeSwapExecutablePath)
     }
 
     public var sanitizedAWSProfile: String? {

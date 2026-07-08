@@ -26,6 +26,18 @@ public enum KeychainCacheStore {
         case invalid
     }
 
+    public enum ClearResult: Equatable, Sendable {
+        case removed
+        case missing
+        case failed
+    }
+
+    public enum KeysResult: Equatable, Sendable {
+        case found([Key])
+        case temporarilyUnavailable
+        case failed
+    }
+
     private static let log = CodexBarLog.logger(LogCategories.keychainCache)
     private static let cacheService = "com.steipete.codexbar.cache"
     private static let cacheLabel = "CodexBar Cache"
@@ -33,6 +45,9 @@ public enum KeychainCacheStore {
     @TaskLocal private static var serviceOverride: String?
     #if DEBUG && os(macOS)
     @TaskLocal private static var loadFailureStatusOverride: OSStatus?
+    @TaskLocal private static var storeFailureStatusOverride: OSStatus?
+    @TaskLocal private static var clearFailureStatusOverride: OSStatus?
+    @TaskLocal private static var keysFailureStatusOverride: OSStatus?
     #endif
     private static let testStoreLock = NSLock()
     private struct TestStoreKey: Hashable {
@@ -68,7 +83,7 @@ public enum KeychainCacheStore {
         KeychainNoUIQuery.apply(to: &query)
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = KeychainSecurity.copyMatching(query as CFDictionary, &result)
         switch status {
         case errSecSuccess:
             guard let data = result as? Data, !data.isEmpty else {
@@ -90,15 +105,26 @@ public enum KeychainCacheStore {
     }
 
     public static func store(key: Key, entry: some Codable) {
-        if self.storeInTestStore(key: key, entry: entry) {
-            return
+        _ = self.storeResult(key: key, entry: entry)
+    }
+
+    @discardableResult
+    public static func storeResult(key: Key, entry: some Codable) -> Bool {
+        #if DEBUG && os(macOS)
+        if let status = self.storeFailureStatusOverride {
+            self.log.error("Keychain cache store failed (\(key.account)): \(status)")
+            return false
         }
-        guard self.canUseRealKeychain else { return }
+        #endif
+        if let stored = self.storeInTestStore(key: key, entry: entry) {
+            return stored
+        }
+        guard self.canUseRealKeychain else { return false }
         #if os(macOS)
         let encoder = Self.makeEncoder()
         guard let data = try? encoder.encode(entry) else {
             self.log.error("Failed to encode keychain cache (\(key.account))")
-            return
+            return false
         }
 
         var query: [String: Any] = [
@@ -108,15 +134,15 @@ public enum KeychainCacheStore {
         ]
         KeychainNoUIQuery.apply(to: &query)
 
-        let updateStatus = SecItemUpdate(
+        let updateStatus = KeychainSecurity.update(
             query as CFDictionary,
             [kSecValueData as String: data] as CFDictionary)
         if updateStatus == errSecSuccess {
-            return
+            return true
         }
         if updateStatus != errSecItemNotFound {
             self.log.error("Keychain cache update failed (\(key.account)): \(updateStatus)")
-            return
+            return false
         }
 
         var addQuery = query
@@ -127,19 +153,31 @@ public enum KeychainCacheStore {
             addQuery[kSecAttrAccess as String] = access
         }
 
-        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        let addStatus = KeychainSecurity.add(addQuery as CFDictionary, nil)
         if addStatus != errSecSuccess {
             self.log.error("Keychain cache add failed (\(key.account)): \(addStatus)")
         }
+        return addStatus == errSecSuccess
+        #else
+        return false
         #endif
     }
 
     @discardableResult
     public static func clear(key: Key) -> Bool {
-        if let removed = self.clearTestStore(key: key) {
-            return removed
+        self.clearResult(key: key) == .removed
+    }
+
+    public static func clearResult(key: Key) -> ClearResult {
+        #if DEBUG && os(macOS)
+        if let status = self.clearFailureStatusOverride {
+            return self.clearResultForKeychainDeleteStatus(status, key: key)
         }
-        guard self.canUseRealKeychain else { return false }
+        #endif
+        if let removed = self.clearTestStore(key: key) {
+            return removed ? .removed : .missing
+        }
+        guard self.canUseRealKeychain else { return .failed }
         #if os(macOS)
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -147,17 +185,31 @@ public enum KeychainCacheStore {
             kSecAttrAccount as String: key.account,
         ]
         KeychainNoUIQuery.apply(to: &query)
-        return self.clearResultForKeychainDeleteStatus(SecItemDelete(query as CFDictionary), key: key)
+        return self.clearResultForKeychainDeleteStatus(KeychainSecurity.delete(query as CFDictionary), key: key)
         #else
-        return false
+        return .failed
         #endif
     }
 
     public static func keys(category: String) -> [Key] {
-        if let keys = self.keysFromTestStore(category: category) {
-            return keys
+        switch self.keysResult(category: category) {
+        case let .found(keys):
+            keys
+        case .temporarilyUnavailable, .failed:
+            []
         }
-        guard self.canUseRealKeychain else { return [] }
+    }
+
+    public static func keysResult(category: String) -> KeysResult {
+        #if DEBUG && os(macOS)
+        if let status = self.keysFailureStatusOverride {
+            return self.keysResultForKeychainStatus(status, category: category, result: nil)
+        }
+        #endif
+        if let keys = self.keysFromTestStore(category: category) {
+            return .found(keys)
+        }
+        guard self.canUseRealKeychain else { return .failed }
         #if os(macOS)
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -168,25 +220,10 @@ public enum KeychainCacheStore {
         KeychainNoUIQuery.apply(to: &query)
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        switch status {
-        case errSecSuccess:
-            guard let rows = result as? [[String: Any]] else { return [] }
-            return rows.compactMap { row in
-                guard let account = row[kSecAttrAccount as String] as? String else { return nil }
-                return self.key(fromAccount: account, category: category)
-            }
-        case errSecItemNotFound:
-            return []
-        case errSecInteractionNotAllowed:
-            self.log.info("Keychain cache keys temporarily unavailable (\(category))")
-            return []
-        default:
-            self.log.error("Keychain cache key listing failed (\(category)): \(status)")
-            return []
-        }
+        let status = KeychainSecurity.copyMatching(query as CFDictionary, &result)
+        return self.keysResultForKeychainStatus(status, category: category, result: result)
         #else
-        return []
+        return .failed
         #endif
     }
 
@@ -242,6 +279,42 @@ public enum KeychainCacheStore {
             try operation()
         }
     }
+
+    public static func withStoreFailureStatusOverrideForTesting<T>(
+        _ status: OSStatus?,
+        operation: () throws -> T) rethrows -> T
+    {
+        try self.$storeFailureStatusOverride.withValue(status) {
+            try operation()
+        }
+    }
+
+    public static func withClearFailureStatusOverrideForTesting<T>(
+        _ status: OSStatus?,
+        operation: () throws -> T) rethrows -> T
+    {
+        try self.$clearFailureStatusOverride.withValue(status) {
+            try operation()
+        }
+    }
+
+    public static func withClearFailureStatusOverrideForTesting<T>(
+        _ status: OSStatus?,
+        operation: () async throws -> T) async rethrows -> T
+    {
+        try await self.$clearFailureStatusOverride.withValue(status) {
+            try await operation()
+        }
+    }
+
+    public static func withKeysFailureStatusOverrideForTesting<T>(
+        _ status: OSStatus?,
+        operation: () throws -> T) rethrows -> T
+    {
+        try self.$keysFailureStatusOverride.withValue(status) {
+            try operation()
+        }
+    }
     #endif
 
     static func setTestStoreForTesting(_ enabled: Bool) {
@@ -270,14 +343,9 @@ public enum KeychainCacheStore {
 
     #if DEBUG
     private static var shouldUseImplicitTestStore: Bool {
-        self.isRunningUnderTests && !self.canUseRealKeychain
-    }
-
-    private static var isRunningUnderTests: Bool {
-        let processName = ProcessInfo.processInfo.processName
-        return processName == "swiftpm-testing-helper"
-            || processName.hasSuffix("PackageTests")
-            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        KeychainTestSafety.isRunningUnderTests(
+            processName: ProcessInfo.processInfo.processName,
+            environment: ProcessInfo.processInfo.environment) && !self.canUseRealKeychain
     }
     #else
     private static var shouldUseImplicitTestStore: Bool {
@@ -315,18 +383,42 @@ public enum KeychainCacheStore {
         }
     }
 
-    static func clearResultForKeychainDeleteStatus(_ status: OSStatus, key: Key) -> Bool {
+    static func clearResultForKeychainDeleteStatus(_ status: OSStatus, key: Key) -> ClearResult {
         switch status {
         case errSecSuccess:
-            return true
+            return .removed
         case errSecItemNotFound:
-            return false
+            return .missing
         case errSecInteractionNotAllowed:
             self.log.info("Keychain cache delete temporarily unavailable (\(key.account))")
-            return false
+            return .failed
         default:
             self.log.error("Keychain cache delete failed (\(key.account)): \(status)")
-            return false
+            return .failed
+        }
+    }
+
+    private static func keysResultForKeychainStatus(
+        _ status: OSStatus,
+        category: String,
+        result: AnyObject?) -> KeysResult
+    {
+        switch status {
+        case errSecSuccess:
+            guard let rows = result as? [[String: Any]] else { return .failed }
+            let keys: [Key] = rows.compactMap { row in
+                guard let account = row[kSecAttrAccount as String] as? String else { return nil }
+                return self.key(fromAccount: account, category: category)
+            }
+            return .found(keys)
+        case errSecItemNotFound:
+            return .found([])
+        case errSecInteractionNotAllowed:
+            self.log.info("Keychain cache keys temporarily unavailable (\(category))")
+            return .temporarilyUnavailable
+        default:
+            self.log.error("Keychain cache key listing failed (\(category)): \(status)")
+            return .failed
         }
     }
 
@@ -447,11 +539,11 @@ public enum KeychainCacheStore {
         return .found(decoded)
     }
 
-    private static func storeInTestStore(key: Key, entry: some Codable) -> Bool {
+    private static func storeInTestStore(key: Key, entry: some Codable) -> Bool? {
         self.testStoreLock.lock()
         defer { self.testStoreLock.unlock() }
         let encoder = Self.makeEncoder()
-        guard let data = try? encoder.encode(entry) else { return true }
+        guard let data = try? encoder.encode(entry) else { return false }
         let testKey = TestStoreKey(service: self.serviceName, account: key.account)
         if var store = self.testStore {
             store[testKey] = data
@@ -462,7 +554,7 @@ public enum KeychainCacheStore {
             self.implicitTestStore[testKey] = data
             return true
         }
-        return false
+        return nil
     }
 
     private static func clearTestStore(key: Key) -> Bool? {

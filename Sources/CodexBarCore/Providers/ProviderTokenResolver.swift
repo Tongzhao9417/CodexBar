@@ -16,6 +16,10 @@ public struct ProviderTokenResolution: Sendable {
 }
 
 public enum ProviderTokenResolver {
+    public static func ampToken(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        self.ampResolution(environment: environment)?.token
+    }
+
     public static func zaiToken(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         self.zaiResolution(environment: environment)?.token
     }
@@ -64,6 +68,10 @@ public enum ProviderTokenResolver {
         self.kimiAuthResolution(environment: environment)?.token
     }
 
+    public static func kimiAPIToken(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        self.kimiAPIResolution(environment: environment)?.token
+    }
+
     public static func kimiK2Token(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
         self.kimiK2Resolution(environment: environment)?.token
     }
@@ -91,6 +99,10 @@ public enum ProviderTokenResolver {
         self.openRouterResolution(environment: environment)?.token
     }
 
+    public static func crossModelToken(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        self.crossModelResolution(environment: environment)?.token
+    }
+
     public static func elevenLabsToken(
         environment: [String: String] = ProcessInfo.processInfo.environment) -> String?
     {
@@ -105,6 +117,16 @@ public enum ProviderTokenResolver {
         self.llmProxyResolution(environment: environment)?.token
     }
 
+    public static func liteLLMToken(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        self.liteLLMResolution(environment: environment)?.token
+    }
+
+    public static func clawRouterToken(
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> String?
+    {
+        self.clawRouterResolution(environment: environment)?.token
+    }
+
     public static func perplexitySessionToken(
         environment: [String: String] = ProcessInfo.processInfo.environment) -> String?
     {
@@ -115,6 +137,12 @@ public enum ProviderTokenResolver {
         environment: [String: String] = ProcessInfo.processInfo.environment) -> String?
     {
         self.deepseekResolution(environment: environment)?.token
+    }
+
+    public static func poeToken(
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> String?
+    {
+        self.poeResolution(environment: environment)?.token
     }
 
     public static func crofToken(
@@ -151,10 +179,22 @@ public enum ProviderTokenResolver {
         self.resolveEnv(BedrockSettingsReader.accessKeyID(environment: environment))
     }
 
+    public static func ampResolution(
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
+    {
+        self.resolveEnv(AmpSettingsReader.apiToken(environment: environment))
+    }
+
     public static func deepseekResolution(
         environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
     {
         self.resolveEnv(DeepSeekSettingsReader.apiKey(environment: environment))
+    }
+
+    public static func poeResolution(
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
+    {
+        self.resolveEnv(PoeSettingsReader.apiKey(environment: environment))
     }
 
     public static func crofResolution(
@@ -261,6 +301,12 @@ public enum ProviderTokenResolver {
         return nil
     }
 
+    public static func kimiAPIResolution(
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
+    {
+        self.resolveEnv(KimiSettingsReader.apiKey(environment: environment))
+    }
+
     public static func kimiK2Resolution(
         environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
     {
@@ -304,6 +350,12 @@ public enum ProviderTokenResolver {
         self.resolveEnv(OpenRouterSettingsReader.apiToken(environment: environment))
     }
 
+    public static func crossModelResolution(
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
+    {
+        self.resolveEnv(CrossModelSettingsReader.apiToken(environment: environment))
+    }
+
     public static func elevenLabsResolution(
         environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
     {
@@ -320,6 +372,18 @@ public enum ProviderTokenResolver {
         environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
     {
         self.resolveEnv(LLMProxySettingsReader.apiKey(environment: environment))
+    }
+
+    public static func liteLLMResolution(
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
+    {
+        self.resolveEnv(LiteLLMSettingsReader.apiKey(environment: environment))
+    }
+
+    public static func clawRouterResolution(
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> ProviderTokenResolution?
+    {
+        self.resolveEnv(ClawRouterSettingsReader.apiKey(environment: environment))
     }
 
     public enum DeepgramCredentialKind: Sendable {

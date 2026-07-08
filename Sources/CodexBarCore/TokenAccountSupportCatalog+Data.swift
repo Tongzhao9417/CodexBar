@@ -108,6 +108,13 @@ extension TokenAccountSupportCatalog {
             injection: .cookieHeader,
             requiresManualCookieSource: true,
             cookieName: nil),
+        .qoder: TokenAccountSupport(
+            title: "Session tokens",
+            subtitle: "Store multiple Qoder Cookie headers.",
+            placeholder: "Cookie: …",
+            injection: .cookieHeader,
+            requiresManualCookieSource: true,
+            cookieName: nil),
         .copilot: TokenAccountSupport(
             title: "GitHub accounts",
             subtitle: "Sign in with multiple GitHub accounts via OAuth.",
@@ -141,6 +148,13 @@ extension TokenAccountSupportCatalog {
             subtitle: "Store multiple LLM Proxy API keys.",
             placeholder: "Paste proxy API key…",
             injection: .environment(key: LLMProxySettingsReader.apiKeyEnvironmentKey),
+            requiresManualCookieSource: false,
+            cookieName: nil),
+        .litellm: TokenAccountSupport(
+            title: "API keys",
+            subtitle: "Store multiple LiteLLM API keys.",
+            placeholder: "Paste LiteLLM API key…",
+            injection: .environment(key: LiteLLMSettingsReader.apiKeyEnvironmentKey),
             requiresManualCookieSource: false,
             cookieName: nil),
         .stepfun: TokenAccountSupport(

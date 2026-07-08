@@ -146,7 +146,7 @@ struct CodexAccountsSectionView: View {
     let importAccount: () -> Void
 
     var body: some View {
-        ProviderSettingsSection(title: L("Accounts")) {
+        Section {
             if let selection = self.activeSelectionBinding {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -236,6 +236,8 @@ struct CodexAccountsSectionView: View {
                 .controlSize(.small)
                 .disabled(self.state.canImportAccount == false)
             }
+        } header: {
+            Text(L("Accounts"))
         }
     }
 

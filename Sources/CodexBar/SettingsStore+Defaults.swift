@@ -13,6 +13,16 @@ extension SettingsStore {
         }
     }
 
+    /// When enabled, keeping the menu open through its short refresh delay fetches usage for every
+    /// enabled provider. The periodic refresh clock remains unchanged. See `scheduleOpenMenuRefresh`.
+    var refreshAllProvidersOnMenuOpen: Bool {
+        get { self.defaultsState.refreshAllProvidersOnMenuOpen }
+        set {
+            self.defaultsState.refreshAllProvidersOnMenuOpen = newValue
+            self.userDefaults.set(newValue, forKey: "refreshAllProvidersOnMenuOpen")
+        }
+    }
+
     var launchAtLogin: Bool {
         get { self.defaultsState.launchAtLogin }
         set {
@@ -173,6 +183,14 @@ extension SettingsStore {
         }
     }
 
+    var quotaWarningOnScreenAlertEnabled: Bool {
+        get { self.defaultsState.quotaWarningOnScreenAlertEnabled }
+        set {
+            self.defaultsState.quotaWarningOnScreenAlertEnabled = newValue
+            self.userDefaults.set(newValue, forKey: "quotaWarningOnScreenAlertEnabled")
+        }
+    }
+
     var quotaWarningMarkersVisible: Bool {
         get { self.defaultsState.quotaWarningMarkersVisible }
         set {
@@ -222,6 +240,14 @@ extension SettingsStore {
         set {
             self.defaultsState.menuBarShowsBrandIconWithPercent = newValue
             self.userDefaults.set(newValue, forKey: "menuBarShowsBrandIconWithPercent")
+        }
+    }
+
+    var menuBarHidesCritters: Bool {
+        get { self.defaultsState.menuBarHidesCritters }
+        set {
+            self.defaultsState.menuBarHidesCritters = newValue
+            self.userDefaults.set(newValue, forKey: "menuBarHidesCritters")
         }
     }
 
@@ -288,6 +314,14 @@ extension SettingsStore {
         }
     }
 
+    var copilotIconSecondaryWindowIDRaw: String {
+        get { self.defaultsState.copilotIconSecondaryWindowIDRaw }
+        set {
+            self.defaultsState.copilotIconSecondaryWindowIDRaw = newValue
+            self.userDefaults.set(newValue, forKey: "copilotIconSecondaryWindowID")
+        }
+    }
+
     var costUsageEnabled: Bool {
         get { self.defaultsState.costUsageEnabled }
         set {
@@ -305,6 +339,27 @@ extension SettingsStore {
         }
     }
 
+    var costComparisonPeriodsEnabled: Bool {
+        get { self.defaultsState.costComparisonPeriodsEnabled }
+        set {
+            self.defaultsState.costComparisonPeriodsEnabled = newValue
+            self.userDefaults.set(newValue, forKey: "costComparisonPeriodsEnabled")
+        }
+    }
+
+    var costSummaryDisplayStyleRaw: String {
+        get { self.defaultsState.costSummaryDisplayStyleRaw }
+        set {
+            self.defaultsState.costSummaryDisplayStyleRaw = newValue
+            self.userDefaults.set(newValue, forKey: "costSummaryDisplayStyle")
+        }
+    }
+
+    var costSummaryDisplayStyle: CostSummaryDisplayStyle {
+        get { CostSummaryDisplayStyle(rawValue: self.costSummaryDisplayStyleRaw) ?? .both }
+        set { self.costSummaryDisplayStyleRaw = newValue.rawValue }
+    }
+
     var hidePersonalInfo: Bool {
         get { self.defaultsState.hidePersonalInfo }
         set {
@@ -318,6 +373,14 @@ extension SettingsStore {
         set {
             self.defaultsState.randomBlinkEnabled = newValue
             self.userDefaults.set(newValue, forKey: "randomBlinkEnabled")
+        }
+    }
+
+    var confettiOnSessionLimitResetsEnabled: Bool {
+        get { self.defaultsState.confettiOnSessionLimitResetsEnabled }
+        set {
+            self.defaultsState.confettiOnSessionLimitResetsEnabled = newValue
+            self.userDefaults.set(newValue, forKey: "confettiOnSessionLimitResetsEnabled")
         }
     }
 
@@ -351,9 +414,10 @@ extension SettingsStore {
     var claudeOAuthKeychainReadStrategy: ClaudeOAuthKeychainReadStrategy {
         get {
             guard let raw = self.defaultsState.claudeOAuthKeychainReadStrategyRaw else {
-                return .securityCLIExperimental
+                return .securityFramework
             }
-            return ClaudeOAuthKeychainReadStrategy(rawValue: raw) ?? .securityFramework
+            let strategy = ClaudeOAuthKeychainReadStrategy(rawValue: raw) ?? .securityFramework
+            return strategy == .securityCLIExperimental ? .securityFramework : strategy
         }
         set {
             self.defaultsState.claudeOAuthKeychainReadStrategyRaw = newValue.rawValue
@@ -362,17 +426,31 @@ extension SettingsStore {
     }
 
     var claudeOAuthPromptFreeCredentialsEnabled: Bool {
-        get { self.claudeOAuthKeychainReadStrategy == .securityCLIExperimental }
+        get { self.claudeOAuthKeychainPromptMode == .never }
         set {
-            self.claudeOAuthKeychainReadStrategy = newValue
-                ? .securityCLIExperimental
-                : .securityFramework
+            self.claudeOAuthKeychainReadStrategy = .securityFramework
+            if newValue {
+                self.claudeOAuthKeychainPromptMode = .never
+            } else if self.claudeOAuthKeychainPromptMode == .never {
+                self.claudeOAuthKeychainPromptMode = .onlyOnUserAction
+            }
         }
     }
 
     var claudeWebExtrasEnabled: Bool {
         get { self.claudeWebExtrasEnabledRaw }
         set { self.claudeWebExtrasEnabledRaw = newValue }
+    }
+
+    var copilotBudgetExtrasEnabled: Bool {
+        get { self.defaultsState.copilotBudgetExtrasEnabled }
+        set {
+            self.defaultsState.copilotBudgetExtrasEnabled = newValue
+            self.userDefaults.set(newValue, forKey: "copilotBudgetExtrasEnabled")
+            CodexBarLog.logger(LogCategories.settings).info(
+                "Copilot budget extras updated",
+                metadata: ["enabled": newValue ? "1" : "0"])
+        }
     }
 
     private var claudeWebExtrasEnabledRaw: Bool {
@@ -452,9 +530,9 @@ extension SettingsStore {
     }
 
     var mergedMenuLastSelectedWasOverview: Bool {
-        get { self.defaultsState.mergedMenuLastSelectedWasOverview }
+        get { self.mergedMenuLastSelectedWasOverviewStorage }
         set {
-            self.defaultsState.mergedMenuLastSelectedWasOverview = newValue
+            self.mergedMenuLastSelectedWasOverviewStorage = newValue
             self.userDefaults.set(newValue, forKey: "mergedMenuLastSelectedWasOverview")
         }
     }
@@ -468,9 +546,9 @@ extension SettingsStore {
     }
 
     private var selectedMenuProviderRaw: String? {
-        get { self.defaultsState.selectedMenuProviderRaw }
+        get { self.selectedMenuProviderRawStorage }
         set {
-            self.defaultsState.selectedMenuProviderRaw = newValue
+            self.selectedMenuProviderRawStorage = newValue
             if let raw = newValue {
                 self.userDefaults.set(raw, forKey: "selectedMenuProvider")
             } else {
@@ -637,6 +715,17 @@ extension SettingsStore {
         }
     }
 
+    /// Whether the Providers settings pane displays providers sorted alphabetically (enabled on
+    /// top). Defaults to `false`. Purely a display preference — it never rewrites the stored manual
+    /// order, so turning it on sorts the display without losing the user's hand-arranged sequence.
+    var providersSortedAlphabetically: Bool {
+        get { self.defaultsState.providersSortedAlphabetically }
+        set {
+            self.defaultsState.providersSortedAlphabetically = newValue
+            self.userDefaults.set(newValue, forKey: "providersSortedAlphabetically")
+        }
+    }
+
     var appLanguage: String {
         get { self.defaultsState.appLanguageRaw ?? "" }
         set {
@@ -647,7 +736,7 @@ extension SettingsStore {
                 if self.userDefaults !== UserDefaults.standard {
                     UserDefaults.standard.set(stored, forKey: "appLanguage")
                 }
-                UserDefaults.standard.set([stored], forKey: "AppleLanguages")
+                UserDefaults.standard.removeObject(forKey: "AppleLanguages")
             } else {
                 self.userDefaults.removeObject(forKey: "appLanguage")
                 if self.userDefaults !== UserDefaults.standard {
@@ -655,12 +744,37 @@ extension SettingsStore {
                 }
                 UserDefaults.standard.removeObject(forKey: "AppleLanguages")
             }
+            resetCodexBarLocalizationCache()
         }
     }
 
     var debugLoadingPattern: LoadingPattern? {
         get { self.debugLoadingPatternRaw.flatMap(LoadingPattern.init(rawValue:)) }
         set { self.debugLoadingPatternRaw = newValue?.rawValue }
+    }
+
+    var terminalApp: TerminalApp {
+        get { TerminalApp(rawValue: self.defaultsState.terminalAppRaw ?? "") ?? .terminal }
+        set {
+            self.defaultsState.terminalAppRaw = newValue.rawValue
+            self.userDefaults.set(newValue.rawValue, forKey: "terminalApp")
+        }
+    }
+
+    var agentSessionsEnabled: Bool {
+        get { self.defaultsState.agentSessionsEnabled }
+        set {
+            self.defaultsState.agentSessionsEnabled = newValue
+            self.userDefaults.set(newValue, forKey: "agentSessionsEnabled")
+        }
+    }
+
+    var agentSessionsManualHosts: String {
+        get { self.defaultsState.agentSessionsManualHosts }
+        set {
+            self.defaultsState.agentSessionsManualHosts = newValue
+            self.userDefaults.set(newValue, forKey: "agentSessionsManualHosts")
+        }
     }
 }
 

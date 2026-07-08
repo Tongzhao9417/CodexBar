@@ -2,8 +2,10 @@ import CodexBarCore
 import Commander
 #if canImport(Darwin)
 import Darwin
-#else
+#elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
 #endif
 import Foundation
 
@@ -168,6 +170,19 @@ extension CodexBarCLI {
         return fallback ? .absolute : .countdown
     }
 
+    static func weeklyProgressWorkDaysFromDefaults() -> Int? {
+        let domains = [
+            "com.steipete.codexbar",
+            "com.steipete.codexbar.debug",
+        ]
+        for domain in domains {
+            if let value = UserDefaults(suiteName: domain)?.object(forKey: "weeklyProgressWorkDays") as? Int {
+                return value
+            }
+        }
+        return UserDefaults.standard.object(forKey: "weeklyProgressWorkDays") as? Int
+    }
+
     static func fetchProviderUsage(
         provider: UsageProvider,
         context: ProviderFetchContext) async -> ProviderFetchOutcome
@@ -233,11 +248,16 @@ extension CodexBarCLI {
         return nil
     }
 
-    static func decodeWebTimeout(from values: ParsedValues) -> TimeInterval? {
-        if let raw = values.options["webTimeout"]?.last, let seconds = Double(raw) {
-            return seconds
+    static func decodeWebTimeout(from values: ParsedValues) throws -> TimeInterval? {
+        guard let raw = values.options["webTimeout"]?.last else { return nil }
+        guard let seconds = Double(raw),
+              seconds.isFinite,
+              seconds >= 0,
+              seconds <= TimeInterval(Int64.max)
+        else {
+            throw CLIArgumentError("--web-timeout must be a finite, nonnegative number within the supported range.")
         }
-        return nil
+        return seconds
     }
 
     static func decodeSourceMode(from values: ParsedValues) -> ProviderSourceMode? {
@@ -282,6 +302,7 @@ extension CodexBarCLI {
         case CodexStatusProbeError.timedOut,
              TTYCommandRunner.Error.timedOut,
              GeminiStatusProbeError.timedOut,
+             ClaudeWebFetchStrategyError.timedOut,
              CostUsageError.timedOut:
             ExitCode(4)
         case ClaudeUsageError.parseFailed,
@@ -289,7 +310,8 @@ extension CodexBarCLI {
              CostUsageError.unsupportedProvider,
              UsageError.decodeFailed,
              UsageError.noRateLimitsFound,
-             GeminiStatusProbeError.parseFailed:
+             GeminiStatusProbeError.parseFailed,
+             GeminiStatusProbeError.consumerTierDeprecated:
             ExitCode(3)
         default:
             .failure
@@ -382,8 +404,8 @@ extension CodexBarCLI {
         self.decodeFormat(from: values)
     }
 
-    static func _decodeWebTimeoutForTesting(from values: ParsedValues) -> TimeInterval? {
-        self.decodeWebTimeout(from: values)
+    static func _decodeWebTimeoutForTesting(from values: ParsedValues) throws -> TimeInterval? {
+        try self.decodeWebTimeout(from: values)
     }
 
     static func _decodeSourceModeForTesting(from values: ParsedValues) -> ProviderSourceMode? {

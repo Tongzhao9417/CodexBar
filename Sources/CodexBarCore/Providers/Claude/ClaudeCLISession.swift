@@ -1,7 +1,9 @@
 #if canImport(Darwin)
 import Darwin
-#else
+#elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
 #endif
 import Foundation
 
@@ -303,6 +305,13 @@ actor ClaudeCLISession {
         var env = Self.launchEnvironment()
         env["PWD"] = workingDirectory.path
         proc.environment = env
+
+        guard TTYCommandRunner.beginActiveProcessLaunchForAppShutdown() else {
+            try? primaryHandle.close()
+            try? secondaryHandle.close()
+            throw SessionError.launchFailed("App shutdown in progress")
+        }
+        defer { TTYCommandRunner.endActiveProcessLaunchForAppShutdown() }
 
         do {
             try proc.run()

@@ -11,10 +11,9 @@ extension StatusItemController {
         if mergeIcons {
             let primary = self.primaryProviderForUnifiedIcon()
             primaryProvider = primary
-            providerSignatures = [
-                self.providerStoreIconObservationSignature(for: primary, showBrandPercent: showBrandPercent),
-                "mergedStatus=\(self.mergedIconStatusIndicator().rawValue)",
-            ].joined(separator: "||")
+            providerSignatures = self.providerStoreIconObservationSignature(
+                for: primary,
+                showBrandPercent: showBrandPercent)
         } else {
             primaryProvider = nil
             providerSignatures = UsageProvider.allCases
@@ -29,6 +28,7 @@ extension StatusItemController {
             "iconStyle=\(self.store.iconStyle.rawValue)",
             "showUsed=\(self.settings.usageBarsShowUsed ? "1" : "0")",
             "brandPercent=\(showBrandPercent ? "1" : "0")",
+            "hideCritters=\(self.settings.menuBarHidesCritters ? "1" : "0")",
             "needsAnimation=\(self.needsMenuBarIconAnimation() ? "1" : "0")",
             providerSignatures,
         ].joined(separator: "|")
@@ -37,12 +37,11 @@ extension StatusItemController {
     private func providerStoreIconObservationSignature(for provider: UsageProvider, showBrandPercent: Bool) -> String {
         let snapshot = self.store.snapshot(for: provider)
         let style = self.store.style(for: provider)
-        let resolved = snapshot.map {
-            IconRemainingResolver.resolvedPercents(
-                snapshot: $0,
-                style: style,
-                showUsed: self.settings.usageBarsShowUsed)
-        }
+        let resolved = self.resolvedMenuBarIconPercents(
+            provider: provider,
+            snapshot: snapshot,
+            style: style,
+            showUsed: self.settings.usageBarsShowUsed)
         let creditsRemaining = self.menuBarCreditsRemainingForIcon(provider: provider, snapshot: snapshot)
         let displayText = showBrandPercent ? self.menuBarDisplayText(for: provider, snapshot: snapshot) : nil
 
@@ -58,13 +57,5 @@ extension StatusItemController {
             "refreshing=\(self.store.refreshingProviders.contains(provider) ? "1" : "0")",
             "text=\(displayText ?? "nil")",
         ].joined(separator: "|")
-    }
-
-    private func mergedIconStatusIndicator() -> ProviderStatusIndicator {
-        for provider in self.store.enabledProvidersForDisplay() {
-            let indicator = self.store.statusIndicator(for: provider)
-            if indicator.hasIssue { return indicator }
-        }
-        return .none
     }
 }

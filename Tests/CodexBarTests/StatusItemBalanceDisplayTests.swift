@@ -6,14 +6,6 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct StatusItemBalanceDisplayTests {
-    private func makeStatusBarForTesting() -> NSStatusBar {
-        let env = ProcessInfo.processInfo.environment
-        if env["GITHUB_ACTIONS"] == "true" || env["CI"] == "true" {
-            return .system
-        }
-        return NSStatusBar()
-    }
-
     @Test
     func `menu bar display text uses open router balance`() {
         let settings = self.makeSettings(
@@ -21,6 +13,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .openrouter)
         settings.setMenuBarMetricPreference(.automatic, for: .openrouter)
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.openRouterSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .openrouter)
@@ -32,12 +25,162 @@ struct StatusItemBalanceDisplayTests {
     }
 
     @Test
+    func `reset time mode preserves automatic open router balance`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-openrouter-reset-time",
+            provider: .openrouter)
+        settings.menuBarDisplayMode = .resetTime
+        settings.setMenuBarMetricPreference(.automatic, for: .openrouter)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = Self.openRouterSnapshot()
+
+        store._setSnapshotForTesting(snapshot, provider: .openrouter)
+        store._setErrorForTesting(nil, provider: .openrouter)
+
+        let displayText = controller.menuBarDisplayText(for: .openrouter, snapshot: snapshot)
+
+        #expect(displayText == "$12.34")
+    }
+
+    @Test
+    func `menu bar display text uses crossmodel balance currency`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-crossmodel-eur-balance",
+            provider: .crossmodel)
+        settings.setMenuBarMetricPreference(.automatic, for: .crossmodel)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = CrossModelUsageSnapshot(
+            currency: "EUR",
+            balance: 8.059489,
+            uncollected: 0,
+            daily: nil,
+            weekly: nil,
+            monthly: nil,
+            updatedAt: Date())
+            .toUsageSnapshot()
+
+        store._setSnapshotForTesting(snapshot, provider: .crossmodel)
+        store._setErrorForTesting(nil, provider: .crossmodel)
+
+        let displayText = controller.menuBarDisplayText(for: .crossmodel, snapshot: snapshot)
+
+        #expect(displayText == "€8.06")
+    }
+
+    @Test
+    func `menu bar display text uses zen balance when open code has no subscription`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-opencodego-zen-only",
+            provider: .opencodego)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = UsageSnapshot(
+            primary: nil,
+            secondary: nil,
+            providerCost: ProviderCostSnapshot(
+                used: 23.75,
+                limit: 0,
+                currencyCode: "USD",
+                period: "Zen balance",
+                updatedAt: Date()),
+            updatedAt: Date())
+
+        store._setSnapshotForTesting(snapshot, provider: .opencodego)
+        store._setErrorForTesting(nil, provider: .opencodego)
+
+        let displayText = controller.menuBarDisplayText(for: .opencodego, snapshot: snapshot)
+
+        #expect(displayText == "$23.75")
+    }
+
+    @Test
+    func `menu bar display text uses negative zen balance when open code is in deficit`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-opencodego-zen-deficit",
+            provider: .opencodego)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = UsageSnapshot(
+            primary: nil,
+            secondary: nil,
+            providerCost: ProviderCostSnapshot(
+                used: -4.25,
+                limit: 0,
+                currencyCode: "USD",
+                period: "Zen balance",
+                updatedAt: Date()),
+            updatedAt: Date())
+
+        store._setSnapshotForTesting(snapshot, provider: .opencodego)
+        store._setErrorForTesting(nil, provider: .opencodego)
+
+        let displayText = controller.menuBarDisplayText(for: .opencodego, snapshot: snapshot)
+
+        #expect(displayText == "-$4.25")
+    }
+
+    @Test
+    func `menu bar display text keeps open code subscription percentage`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-opencodego-subscription",
+            provider: .opencodego)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = UsageSnapshot(
+            primary: RateWindow(usedPercent: 12, windowMinutes: 300, resetsAt: nil, resetDescription: nil),
+            secondary: RateWindow(usedPercent: 34, windowMinutes: 10080, resetsAt: nil, resetDescription: nil),
+            providerCost: ProviderCostSnapshot(
+                used: 23.75,
+                limit: 0,
+                currencyCode: "USD",
+                period: "Zen balance",
+                updatedAt: Date()),
+            updatedAt: Date())
+
+        store._setSnapshotForTesting(snapshot, provider: .opencodego)
+        store._setErrorForTesting(nil, provider: .opencodego)
+
+        let displayText = controller.menuBarDisplayText(for: .opencodego, snapshot: snapshot)
+
+        #expect(displayText == "12%")
+    }
+
+    @Test
+    func `reset time mode preserves balance when provider has no quota window`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-moonshot-reset-time",
+            provider: .moonshot)
+        settings.menuBarDisplayMode = .resetTime
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = UsageSnapshot(
+            primary: nil,
+            secondary: nil,
+            updatedAt: Date(),
+            identity: ProviderIdentitySnapshot(
+                providerID: .moonshot,
+                accountEmail: nil,
+                accountOrganization: nil,
+                loginMethod: "Balance: $49.58 · $0.42 in deficit"))
+
+        store._setSnapshotForTesting(snapshot, provider: .moonshot)
+        store._setErrorForTesting(nil, provider: .moonshot)
+
+        let displayText = controller.menuBarDisplayText(for: .moonshot, snapshot: snapshot)
+
+        #expect(displayText == "$49.58")
+    }
+
+    @Test
     func `menu bar display text respects open router primary metric preference`() {
         let settings = self.makeSettings(
             suiteName: "StatusItemBalanceDisplayTests-openrouter-primary-metric",
             provider: .openrouter)
         settings.setMenuBarMetricPreference(.primary, for: .openrouter)
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.openRouterSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .openrouter)
@@ -49,11 +192,39 @@ struct StatusItemBalanceDisplayTests {
     }
 
     @Test
+    func `menu bar display text skips exhausted cursor api subquota when total remains usable`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-cursor-exhausted-api",
+            provider: .cursor)
+        settings.usageBarsShowUsed = false
+        settings.setMenuBarMetricPreference(.automatic, for: .cursor)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = UsageSnapshot(
+            primary: RateWindow(usedPercent: 67, windowMinutes: 30 * 24 * 60, resetsAt: nil, resetDescription: "Total"),
+            secondary: RateWindow(
+                usedPercent: 34,
+                windowMinutes: 30 * 24 * 60,
+                resetsAt: nil,
+                resetDescription: "Auto"),
+            tertiary: RateWindow(usedPercent: 100, windowMinutes: 30 * 24 * 60, resetsAt: nil, resetDescription: "API"),
+            updatedAt: Date())
+
+        store._setSnapshotForTesting(snapshot, provider: .cursor)
+        store._setErrorForTesting(nil, provider: .cursor)
+
+        let displayText = controller.menuBarDisplayText(for: .cursor, snapshot: snapshot)
+
+        #expect(displayText == "33%")
+    }
+
+    @Test
     func `menu bar display text uses deepseek balance`() {
         let settings = self.makeSettings(
             suiteName: "StatusItemBalanceDisplayTests-deepseek-balance",
             provider: .deepseek)
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = UsageSnapshot(
             primary: RateWindow(
                 usedPercent: 0,
@@ -72,11 +243,61 @@ struct StatusItemBalanceDisplayTests {
     }
 
     @Test
+    func `menu bar display text uses mimo balance without token plan`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-mimo-balance",
+            provider: .mimo)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = MiMoUsageSnapshot(
+            balance: 25.51,
+            currency: "USD",
+            cashBalance: 20,
+            giftBalance: 5.51,
+            updatedAt: Date())
+            .toUsageSnapshot()
+
+        store._setSnapshotForTesting(snapshot, provider: .mimo)
+        store._setErrorForTesting(nil, provider: .mimo)
+
+        let displayText = controller.menuBarDisplayText(for: .mimo, snapshot: snapshot)
+
+        #expect(displayText == "$25.51")
+    }
+
+    @Test
+    func `menu bar display text uses selected mimo balance with token plan`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-mimo-token-plan",
+            provider: .mimo)
+        settings.setMenuBarMetricPreference(.secondary, for: .mimo)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = MiMoUsageSnapshot(
+            balance: 25.51,
+            currency: "USD",
+            planCode: "standard",
+            tokenUsed: 10,
+            tokenLimit: 100,
+            tokenPercent: 0.1,
+            updatedAt: Date())
+            .toUsageSnapshot()
+
+        store._setSnapshotForTesting(snapshot, provider: .mimo)
+        store._setErrorForTesting(nil, provider: .mimo)
+
+        let displayText = controller.menuBarDisplayText(for: .mimo, snapshot: snapshot)
+
+        #expect(displayText == "$25.51")
+    }
+
+    @Test
     func `menu bar display text uses moonshot balance`() {
         let settings = self.makeSettings(
             suiteName: "StatusItemBalanceDisplayTests-moonshot-balance",
             provider: .moonshot)
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = UsageSnapshot(
             primary: nil,
             secondary: nil,
@@ -102,6 +323,7 @@ struct StatusItemBalanceDisplayTests {
             suiteName: "StatusItemBalanceDisplayTests-mistral-spend",
             provider: .mistral)
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = MistralUsageSnapshot(
             totalCost: 1.2345,
             currency: "EUR",
@@ -125,11 +347,82 @@ struct StatusItemBalanceDisplayTests {
     }
 
     @Test
+    func `menu bar display text uses mistral monthly plan when selected`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-mistral-monthly-plan",
+            provider: .mistral)
+        settings.setMenuBarMetricPreference(.monthlyPlan, for: .mistral)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = MistralUsageSnapshot(
+            totalCost: 1.2345,
+            currency: "EUR",
+            currencySymbol: "€",
+            totalInputTokens: 10000,
+            totalOutputTokens: 5000,
+            totalCachedTokens: 0,
+            modelCount: 2,
+            startDate: nil,
+            endDate: nil,
+            updatedAt: Date())
+            .toUsageSnapshot()
+            .with(extraRateWindows: [
+                NamedRateWindow(
+                    id: "mistral-monthly-plan",
+                    title: "Monthly Plan",
+                    window: RateWindow(
+                        usedPercent: 42,
+                        windowMinutes: nil,
+                        resetsAt: nil,
+                        resetDescription: nil)),
+            ])
+
+        store._setSnapshotForTesting(snapshot, provider: .mistral)
+        store._setErrorForTesting(nil, provider: .mistral)
+
+        let displayText = controller.menuBarDisplayText(for: .mistral, snapshot: snapshot)
+
+        #expect(snapshot.identity?.loginMethod == "API spend: €1.2345 this month")
+        #expect(displayText == "42%")
+    }
+
+    @Test
+    func `menu bar display text falls back to mistral spend when monthly plan is missing`() {
+        let settings = self.makeSettings(
+            suiteName: "StatusItemBalanceDisplayTests-mistral-monthly-plan-missing",
+            provider: .mistral)
+        settings.setMenuBarMetricPreference(.monthlyPlan, for: .mistral)
+        let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
+        let snapshot = MistralUsageSnapshot(
+            totalCost: 1.2345,
+            currency: "EUR",
+            currencySymbol: "€",
+            totalInputTokens: 10000,
+            totalOutputTokens: 5000,
+            totalCachedTokens: 0,
+            modelCount: 2,
+            startDate: nil,
+            endDate: nil,
+            updatedAt: Date())
+            .toUsageSnapshot()
+
+        store._setSnapshotForTesting(snapshot, provider: .mistral)
+        store._setErrorForTesting(nil, provider: .mistral)
+
+        let displayText = controller.menuBarDisplayText(for: .mistral, snapshot: snapshot)
+
+        #expect(snapshot.identity?.loginMethod == "API spend: €1.2345 this month")
+        #expect(displayText == "€1.2345")
+    }
+
+    @Test
     func `menu bar display text uses kimi k2 api key credits`() {
         let settings = self.makeSettings(
             suiteName: "StatusItemBalanceDisplayTests-kimik2-credits",
             provider: .kimik2)
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = KimiK2UsageSummary(
             consumed: 75,
             remaining: 1234.5,
@@ -153,6 +446,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .automatic
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.kiroSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -170,6 +464,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .creditsAndPercent
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.kiroSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -187,6 +482,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .hidden
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.kiroSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -204,6 +500,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .usedAndTotal
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.kiroSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -221,6 +518,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .overageCreditsWhenExhausted
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.exhaustedKiroSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -238,6 +536,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .overageCostWhenExhausted
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.exhaustedKiroSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -255,6 +554,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .overageCreditsAndCostWhenExhausted
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.exhaustedKiroSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -272,6 +572,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .overageCreditsAndCostWhenExhausted
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.kiroSnapshot()
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -289,6 +590,7 @@ struct StatusItemBalanceDisplayTests {
             provider: .kiro)
         settings.kiroMenuBarDisplayMode = .overageCreditsAndCostWhenExhausted
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = Self.exhaustedKiroSnapshot(overagesStatus: "Disabled")
 
         store._setSnapshotForTesting(snapshot, provider: .kiro)
@@ -307,6 +609,7 @@ struct StatusItemBalanceDisplayTests {
         settings.kiroMenuBarDisplayMode = .automatic
         settings.usageBarsShowUsed = false
         let (store, controller) = self.makeStoreAndController(settings: settings)
+        defer { controller.releaseStatusItemsForTesting() }
         let snapshot = KiroUsageSnapshot(
             planName: "Q Developer Pro",
             creditsUsed: 0,
@@ -327,7 +630,7 @@ struct StatusItemBalanceDisplayTests {
     }
 
     @Test
-    func `mistral primary window is nil even when billing end date is set`() {
+    func `mistral primary window is nil without credits even when billing end date is set`() {
         let endDate = Date(timeIntervalSinceNow: 3600)
         let snapshot = MistralUsageSnapshot(
             totalCost: 0.5,
@@ -341,7 +644,7 @@ struct StatusItemBalanceDisplayTests {
             endDate: endDate,
             updatedAt: Date()).toUsageSnapshot()
 
-        // Mistral doesn't expose a reset time — primary is always nil.
+        // Billing end date alone is not a quota window; credits are what populate primary.
         #expect(snapshot.primary == nil)
     }
 
@@ -353,11 +656,24 @@ struct StatusItemBalanceDisplayTests {
         #expect(StatusItemController.buttonTitle("", hasImage: true).isEmpty)
     }
 
+    @Test
+    func `debug button title stays visible with or without a usage value`() {
+        #expect(StatusItemController.buttonTitle(nil, hasImage: true, isDebugApp: true) == " D")
+        #expect(StatusItemController.buttonTitle("42%", hasImage: true, isDebugApp: true) == " 42% D")
+        #expect(StatusItemController.buttonTitle("42%", hasImage: false, isDebugApp: true) == "42% D")
+    }
+
+    @Test
+    func `debug bundle identity updates status item accessibility`() {
+        #expect(StatusItemController.isDebugApp(bundleIdentifier: "com.steipete.codexbar.debug"))
+        #expect(!StatusItemController.isDebugApp(bundleIdentifier: "com.steipete.codexbar"))
+        #expect(!StatusItemController.isDebugApp(bundleIdentifier: nil))
+        #expect(StatusItemController.statusItemAccessibilityTitle(isDebugApp: true) == "CodexBar Debug")
+        #expect(StatusItemController.statusItemAccessibilityTitle(isDebugApp: false) == "CodexBar")
+    }
+
     private func makeSettings(suiteName: String, provider: UsageProvider) -> SettingsStore {
-        let settings = SettingsStore(
-            configStore: testConfigStore(suiteName: suiteName),
-            zaiTokenStore: NoopZaiTokenStore(),
-            syntheticTokenStore: NoopSyntheticTokenStore())
+        let settings = testSettingsStore(suiteName: suiteName)
         settings.statusChecksEnabled = false
         settings.refreshFrequency = .manual
         settings.mergeIcons = true
@@ -381,7 +697,7 @@ struct StatusItemBalanceDisplayTests {
             account: fetcher.loadAccountInfo(),
             updater: DisabledUpdaterController(),
             preferencesSelection: PreferencesSelection(),
-            statusBar: self.makeStatusBarForTesting())
+            statusBar: testStatusBar())
         return (store, controller)
     }
 

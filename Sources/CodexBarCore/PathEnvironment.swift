@@ -1,8 +1,10 @@
 import Foundation
 #if canImport(Darwin)
 import Darwin
-#else
+#elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
 #endif
 
 public enum PathPurpose: Hashable, Sendable {
@@ -75,6 +77,31 @@ public enum BinaryLocator {
             "/usr/local/bin/claude",
             "/Applications/cmux.app/Contents/Resources/bin/claude",
         ]
+    }
+
+    public static func resolveAntigravityBinary(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        loginPATH: [String]? = LoginShellPathCache.shared.current,
+        commandV: (String, String?, TimeInterval, FileManager) -> String? = ShellCommandLocator.commandV,
+        aliasResolver: (String, String?, TimeInterval, FileManager, String) -> String? = ShellCommandLocator
+            .resolveAlias,
+        fileManager: FileManager = .default,
+        home: String = NSHomeDirectory()) -> String?
+    {
+        self.resolveBinary(
+            name: "agy",
+            overrideKey: "ANTIGRAVITY_CLI_PATH",
+            env: env,
+            loginPATH: loginPATH,
+            commandV: commandV,
+            aliasResolver: aliasResolver,
+            wellKnownPaths: [
+                "\(home)/.local/bin/agy",
+                "/opt/homebrew/bin/agy",
+                "/usr/local/bin/agy",
+            ],
+            fileManager: fileManager,
+            home: home)
     }
 
     public static func resolveCodexBinary(
@@ -152,6 +179,36 @@ public enum BinaryLocator {
             wellKnownPaths: self.grokWellKnownPaths(home: home),
             fileManager: fileManager,
             home: home)
+    }
+
+    public static func resolveAmpBinary(
+        env: [String: String] = ProcessInfo.processInfo.environment,
+        loginPATH: [String]? = LoginShellPathCache.shared.current,
+        commandV: (String, String?, TimeInterval, FileManager) -> String? = ShellCommandLocator.commandV,
+        aliasResolver: (String, String?, TimeInterval, FileManager, String) -> String? = ShellCommandLocator
+            .resolveAlias,
+        fileManager: FileManager = .default,
+        home: String = NSHomeDirectory()) -> String?
+    {
+        self.resolveBinary(
+            name: "amp",
+            overrideKey: "AMP_CLI_PATH",
+            env: env,
+            loginPATH: loginPATH,
+            commandV: commandV,
+            aliasResolver: aliasResolver,
+            wellKnownPaths: self.ampWellKnownPaths(home: home),
+            fileManager: fileManager,
+            home: home)
+    }
+
+    static func ampWellKnownPaths(home: String) -> [String] {
+        [
+            "\(home)/.local/bin/amp",
+            "\(home)/.amp/bin/amp",
+            "/opt/homebrew/bin/amp",
+            "/usr/local/bin/amp",
+        ]
     }
 
     /// Well-known install locations for the Grok Build CLI binary.
@@ -605,7 +662,7 @@ public enum ShellCommandLocator {
         // Build file actions: redirect stdin from /dev/null, dup pipe write ends to
         // fds 1 and 2, and close every pipe fd in the child.  The init pattern
         // differs between platforms because the typedef is an opaque pointer on
-        // Darwin and a struct on Glibc.
+        // Darwin and a struct on Linux C modules.
         #if canImport(Darwin)
         var fileActions: posix_spawn_file_actions_t?
         #else

@@ -56,6 +56,8 @@ extension UsageStore {
             "live"
         case let .managedAccount(id):
             "managed:\(id.uuidString)"
+        case let .profileHome(path):
+            "profile:\(path)"
         }
 
         let identityKey = switch expectedGuard.identity {
@@ -136,7 +138,7 @@ extension UsageStore {
                     } else {
                         self.credits = nil
                         self.lastCreditsSource = .none
-                        self.lastCreditsError = "Codex credits are still loading; will retry shortly."
+                        self.lastCreditsError = L("Codex credits are still loading; will retry shortly.")
                     }
                 }
                 return

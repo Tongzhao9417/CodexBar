@@ -5,35 +5,72 @@ import SwiftUI
 enum AppLanguage: String, CaseIterable, Identifiable {
     case system = ""
     case english = "en"
-    case spanish = "es"
-    case catalan = "ca"
     case chineseSimplified = "zh-Hans"
     case chineseTraditional = "zh-Hant"
+    case japanese = "ja"
+    case spanish = "es"
     case portugueseBrazilian = "pt-BR"
-    case swedish = "sv"
+    case korean = "ko"
+    case german = "de"
     case french = "fr"
-    case dutch = "nl"
-    case ukrainian = "uk"
+    case arabic = "ar"
+    case italian = "it"
     case vietnamese = "vi"
+    case dutch = "nl"
+    case turkish = "tr"
+    case ukrainian = "uk"
+    case russian = "ru"
+    case indonesian = "id"
+    case polish = "pl"
+    case persian = "fa"
+    case thai = "th"
+    case galician = "gl"
+    case catalan = "ca"
+    case swedish = "sv"
 
     var id: String {
         self.rawValue
     }
 
     var label: String {
+        L(self.labelKey, language: self.labelLanguage)
+    }
+
+    private var labelLanguage: String {
         switch self {
-        case .system: L("language_system")
-        case .english: L("language_english")
-        case .spanish: L("language_spanish")
-        case .catalan: L("language_catalan")
-        case .chineseSimplified: L("language_chinese_simplified")
-        case .chineseTraditional: L("language_chinese_traditional")
-        case .portugueseBrazilian: L("language_portuguese_brazilian")
-        case .swedish: L("language_swedish")
-        case .french: L("language_french")
-        case .dutch: L("language_dutch")
-        case .ukrainian: L("language_ukrainian")
-        case .vietnamese: L("language_vietnamese")
+        case .system, .english:
+            "en"
+        default:
+            self.rawValue
+        }
+    }
+
+    private var labelKey: String {
+        switch self {
+        case .system: "language_system"
+        case .english: "language_english"
+        case .chineseSimplified: "language_chinese_simplified"
+        case .chineseTraditional: "language_chinese_traditional"
+        case .japanese: "language_japanese"
+        case .spanish: "language_spanish"
+        case .portugueseBrazilian: "language_portuguese_brazilian"
+        case .korean: "language_korean"
+        case .german: "language_german"
+        case .french: "language_french"
+        case .arabic: "language_arabic"
+        case .italian: "language_italian"
+        case .vietnamese: "language_vietnamese"
+        case .dutch: "language_dutch"
+        case .turkish: "language_turkish"
+        case .ukrainian: "language_ukrainian"
+        case .russian: "language_russian"
+        case .indonesian: "language_indonesian"
+        case .polish: "language_polish"
+        case .persian: "language_persian"
+        case .thai: "language_thai"
+        case .galician: "language_galician"
+        case .catalan: "language_catalan"
+        case .swedish: "language_swedish"
         }
     }
 }
@@ -41,203 +78,112 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 @MainActor
 struct GeneralPane: View {
     @Bindable var settings: SettingsStore
-    @Bindable var store: UsageStore
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 16) {
-                SettingsSection(contentSpacing: 12) {
-                    Text(L("section_system"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
+        Form {
+            Section {
+                SettingsMenuPicker(
+                    selection: self.$settings.appLanguage,
+                    options: GeneralSettingsMenuOptions.languages,
+                    label: {
+                        SettingsRowLabel(L("language_title"), subtitle: L("language_subtitle"))
+                    },
+                    optionLabel: { rawValue in
+                        Text(verbatim: AppLanguage(rawValue: rawValue)?.label ?? rawValue)
+                    })
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .top, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(L("language_title"))
-                                    .font(.body)
-                                Text(L("language_subtitle"))
-                                    .font(.footnote)
-                                    .foregroundStyle(.tertiary)
-                                    .fixedSize(horizontal: false, vertical: true)
+                SettingsMenuPicker(
+                    selection: self.$settings.terminalApp,
+                    options: GeneralSettingsMenuOptions.terminalApps(selected: self.settings.terminalApp),
+                    label: {
+                        SettingsRowLabel(L("terminal_app_title"), subtitle: L("terminal_app_subtitle"))
+                    },
+                    optionLabel: { option in
+                        HStack(spacing: 6) {
+                            if let icon = option.pickerIcon {
+                                Image(nsImage: icon)
                             }
-                            Spacer()
-                            Picker(L("language_title"), selection: self.$settings.appLanguage) {
-                                ForEach(AppLanguage.allCases) { option in
-                                    Text(option.label).tag(option.rawValue)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 200)
+                            Text(option.label)
                         }
-                    }
+                    })
 
-                    PreferenceToggleRow(
-                        title: L("start_at_login_title"),
-                        subtitle: L("start_at_login_subtitle"),
-                        binding: self.$settings.launchAtLogin)
+                Toggle(L("start_at_login_title"), isOn: self.$settings.launchAtLogin)
+            } header: {
+                Text(L("section_system"))
+            }
+
+            Section {
+                SettingsMenuPicker(
+                    selection: self.$settings.refreshFrequency,
+                    options: GeneralSettingsMenuOptions.refreshFrequencies,
+                    label: { Text(L("refresh_cadence_title")) },
+                    optionLabel: { option in Text(option.label) })
+
+                Toggle(L("refresh_on_open_title"), isOn: self.$settings.refreshAllProvidersOnMenuOpen)
+
+                Toggle(isOn: self.$settings.statusChecksEnabled) {
+                    SettingsRowLabel(
+                        L("check_provider_status_title"),
+                        subtitle: L("check_provider_status_subtitle"))
                 }
-
-                Divider()
-
-                SettingsSection(contentSpacing: 12) {
-                    Text(L("section_usage"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Toggle(isOn: self.$settings.costUsageEnabled) {
-                                Text(L("show_cost_summary"))
-                                    .font(.body)
-                            }
-                            .toggleStyle(.checkbox)
-
-                            Text(L("show_cost_summary_subtitle"))
-                                .font(.footnote)
-                                .foregroundStyle(.tertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-
-                            if self.settings.costUsageEnabled {
-                                Stepper(
-                                    value: self.$settings.costUsageHistoryDays,
-                                    in: 1...365,
-                                    step: 1)
-                                {
-                                    Text(String(
-                                        format: L("cost_history_days_title"),
-                                        self.settings.costUsageHistoryDays))
-                                        .font(.footnote)
-                                }
-
-                                Text(L("cost_auto_refresh_info"))
-                                    .font(.footnote)
-                                    .foregroundStyle(.tertiary)
-
-                                self.costStatusLine(provider: .claude)
-                                self.costStatusLine(provider: .codex)
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-
-                SettingsSection(contentSpacing: 12) {
-                    Text(L("section_automation"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .top, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(L("refresh_cadence_title"))
-                                    .font(.body)
-                                Text(L("refresh_cadence_subtitle"))
-                                    .font(.footnote)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            Spacer()
-                            Picker(L("Refresh cadence"), selection: self.$settings.refreshFrequency) {
-                                ForEach(RefreshFrequency.allCases) { option in
-                                    Text(option.label).tag(option)
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: 200)
-                        }
-                        if self.settings.refreshFrequency == .manual {
-                            Text(L("manual_refresh_hint"))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    PreferenceToggleRow(
-                        title: L("check_provider_status_title"),
-                        subtitle: L("check_provider_status_subtitle"),
-                        binding: self.$settings.statusChecksEnabled)
-                    PreferenceToggleRow(
-                        title: L("session_quota_notifications_title"),
-                        subtitle: L("session_quota_notifications_subtitle"),
-                        binding: self.$settings.sessionQuotaNotificationsEnabled)
-                    PreferenceToggleRow(
-                        title: L("quota_warning_notifications_title"),
-                        subtitle: L("quota_warning_notifications_subtitle"),
-                        binding: self.$settings.quotaWarningNotificationsEnabled)
-                    if self.settings.quotaWarningNotificationsEnabled {
-                        GlobalQuotaWarningSettingsView(settings: self.settings)
-                    }
-                }
-
-                Divider()
-
-                SettingsSection(contentSpacing: 12) {
-                    HStack {
-                        Spacer()
-                        Button(L("quit_app")) { NSApp.terminate(nil) }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
-                    }
+            } header: {
+                Text(L("section_automation"))
+            } footer: {
+                if self.settings.refreshFrequency == .manual {
+                    Text(L("manual_refresh_hint"))
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-        }
-    }
 
-    private func costStatusLine(provider: UsageProvider) -> some View {
-        let name = ProviderDescriptorRegistry.descriptor(for: provider).metadata.displayName
+            Section {
+                Toggle(isOn: self.$settings.sessionQuotaNotificationsEnabled) {
+                    SettingsRowLabel(
+                        L("session_quota_notifications_title"),
+                        subtitle: L("session_quota_notifications_subtitle"))
+                }
 
-        guard provider == .claude || provider == .codex else {
-            return Text(String(format: L("cost_status_unsupported"), name))
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-        }
+                Toggle(isOn: self.$settings.quotaWarningNotificationsEnabled) {
+                    SettingsRowLabel(
+                        L("quota_warning_notifications_title"),
+                        subtitle: L("quota_warning_notifications_subtitle"))
+                }
 
-        if self.store.isTokenRefreshInFlight(for: provider) {
-            let elapsed: String = {
-                guard let startedAt = self.store.tokenLastAttemptAt(for: provider) else { return "" }
-                let seconds = max(0, Date().timeIntervalSince(startedAt))
-                let formatter = DateComponentsFormatter()
-                formatter.allowedUnits = seconds < 60 ? [.second] : [.minute, .second]
-                formatter.unitsStyle = .abbreviated
-                return formatter.string(from: seconds).map { " (\($0))" } ?? ""
-            }()
-            return Text(String(format: L("cost_status_fetching"), name, elapsed))
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
+                if self.settings.quotaWarningNotificationsEnabled {
+                    GlobalQuotaWarningSettingsView(settings: self.settings)
+                }
+            } header: {
+                Text(L("section_notifications"))
+            }
+
+            Section {
+                Toggle("Enable Agent Sessions", isOn: self.$settings.agentSessionsEnabled)
+
+                TextField("Manual SSH hosts", text: self.$settings.agentSessionsManualHosts)
+                    .disabled(!self.settings.agentSessionsEnabled)
+            } header: {
+                Text("Sessions")
+            } footer: {
+                Text(
+                    "Macs on your tailnet are discovered automatically. Local sessions refresh every " +
+                        "30 seconds; remote hosts every 60 seconds and when the menu opens.")
+            }
+
+            Section {
+                LabeledContent(L("open_menu_shortcut_title")) {
+                    OpenMenuShortcutRecorder()
+                }
+            } header: {
+                Text(L("section_keyboard_shortcut"))
+            }
+
+            Section {
+                HStack {
+                    Spacer()
+                    Button(L("quit_app")) { NSApp.terminate(nil) }
+                }
+            }
         }
-        if let snapshot = self.store.tokenSnapshot(for: provider) {
-            let updated = UsageFormatter.updatedString(from: snapshot.updatedAt)
-            let cost = snapshot.last30DaysCostUSD
-                .map { UsageFormatter.currencyString($0, currencyCode: snapshot.currencyCode) } ?? "—"
-            let window = snapshot.historyLabel ?? (snapshot.historyDays == 1 ? "today" : "\(snapshot.historyDays)d")
-            return Text(String(format: L("cost_status_snapshot"), name, updated, window, cost))
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-        }
-        if let error = self.store.tokenError(for: provider), !error.isEmpty {
-            let truncated = UsageFormatter.truncatedSingleLine(error, max: 120)
-            return Text(String(format: L("cost_status_error"), name, truncated))
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-        }
-        if let lastAttempt = self.store.tokenLastAttemptAt(for: provider) {
-            let rel = RelativeDateTimeFormatter()
-            rel.locale = Locale(identifier: "en_US")
-            rel.unitsStyle = .abbreviated
-            let when = rel.localizedString(for: lastAttempt, relativeTo: Date())
-            return Text(String(format: L("cost_status_last_attempt"), name, when))
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
-        }
-        return Text(String(format: L("cost_status_no_data"), name))
-            .font(.footnote)
-            .foregroundStyle(.tertiary)
+        .formStyle(.grouped)
+        .toggleStyle(.switch)
+        .scrollContentBackground(.hidden)
     }
 }

@@ -1,7 +1,9 @@
 #if canImport(Darwin)
 import Darwin
-#else
+#elseif canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
 #endif
 import Foundation
 
@@ -23,10 +25,14 @@ extension CodexBarCLI {
     static func printHelp(for command: String?) -> Never {
         let version = self.currentVersion() ?? "unknown"
         switch command {
+        case "cards":
+            print(Self.cardsHelp(version: version))
         case "usage":
             print(Self.usageHelp(version: version))
         case "cost":
             print(Self.costHelp(version: version))
+        case "sessions", "focus":
+            print(Self.sessionsHelp(version: version))
         case "serve":
             print(Self.serveHelp(version: version))
         case "config", "validate", "dump":
@@ -112,8 +118,10 @@ extension CodexBarCLI {
     static func platformExit(_ code: Int32) -> Never {
         #if canImport(Darwin)
         Darwin.exit(code)
-        #else
+        #elseif canImport(Glibc)
         Glibc.exit(code)
+        #elseif canImport(Musl)
+        Musl.exit(code)
         #endif
     }
 }

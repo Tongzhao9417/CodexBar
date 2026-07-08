@@ -12,8 +12,11 @@ CodexBar reads a single JSON config file for CLI and app provider settings.
 API keys, manual cookie headers, source selection, ordering, and token accounts live here. Keychain is still used for runtime cookie caches, browser Safe Storage access, and provider OAuth/device-flow credentials where those flows require it.
 
 ## Location
-- `~/.codexbar/config.json`
-- Override for scripts/tests: set `CODEXBAR_CONFIG=/path/to/config.json`.
+- `CODEXBAR_CONFIG=/path/to/config.json` when set.
+- `$XDG_CONFIG_HOME/codexbar/config.json` when `XDG_CONFIG_HOME` is set to an absolute path. Relative values are
+  ignored.
+- `~/.config/codexbar/config.json` by default for new installs.
+- `~/.codexbar/config.json` for existing legacy installs when no XDG config exists.
 - The directory is created if missing.
 - Permissions are set to `0600` whenever CodexBar writes the file on macOS and Linux.
 
@@ -48,7 +51,7 @@ All provider fields are optional unless noted.
   - `auto` uses provider-specific fallback order (see `docs/providers.md`).
   - `api` uses the provider's API-backed mode; only some providers consume the `apiKey` field.
 - `apiKey`: raw API token for providers that support config-backed direct API usage.
-- `enterpriseHost`: provider-specific API host/base URL override. Today this is used by Azure OpenAI, Copilot, and LLM Proxy.
+- `enterpriseHost`: provider-specific API host/base URL override. Used by Azure OpenAI, Copilot, LLM Proxy, LiteLLM, and ClawRouter.
 - `cookieSource`: cookie selection policy.
   - `auto` (browser import), `manual` (use `cookieHeader`), `off` (disable cookies)
 - `cookieHeader`: raw cookie header value (e.g. `key=value; other=...`).
@@ -59,7 +62,7 @@ All provider fields are optional unless noted.
 
 ## Manual cookies
 Use manual cookies when automatic browser import is unavailable, disabled, or too noisy for your setup.
-The app and CLI both read the same `~/.codexbar/config.json`, so a manual cookie saved in the UI is also used by
+The app and CLI both read the same resolved config file, so a manual cookie saved in the UI is also used by
 `codexbar`, and a cookie written by tooling is shown in the app after reload.
 
 `cookieHeader` expects the HTTP `Cookie:` request header value for the provider origin, not a raw Netscape cookie
@@ -103,6 +106,8 @@ printf '%s' "$ELEVENLABS_API_KEY" | codexbar config set-api-key --provider eleve
 printf '%s' "$OPENAI_ADMIN_KEY" | codexbar config set-api-key --provider openai --stdin
 printf '%s' "$GROQ_API_KEY" | codexbar config set-api-key --provider groq --stdin
 printf '%s' "$LLM_PROXY_API_KEY" | codexbar config set-api-key --provider llmproxy --stdin
+printf '%s' "$LITELLM_API_KEY" | codexbar config set-api-key --provider litellm --stdin
+printf '%s' "$CLAWROUTER_API_KEY" | codexbar config set-api-key --provider clawrouter --stdin
 ```
 
 OpenAI API project scoping uses `workspaceID` in config. This maps to `OPENAI_PROJECT_ID` for Admin API usage and is
@@ -128,9 +133,32 @@ LLM Proxy also needs a base URL. Set `enterpriseHost` in config or `LLM_PROXY_BA
 }
 ```
 
+LiteLLM also needs a base URL. Set `enterpriseHost` in config or `LITELLM_BASE_URL` in the process environment:
+
+```json
+{
+  "id": "litellm",
+  "enabled": true,
+  "apiKey": "<REDACTED>",
+  "enterpriseHost": "https://litellm.example.com"
+}
+```
+
+ClawRouter defaults to the hosted service. To use another deployment, set `enterpriseHost` in config or
+`CLAWROUTER_BASE_URL` in the process environment:
+
+```json
+{
+  "id": "clawrouter",
+  "enabled": true,
+  "apiKey": "<REDACTED>",
+  "enterpriseHost": "https://router.example.com"
+}
+```
+
 See [CLI configuration](cli-configuration.md) for scripting examples and output formats.
 
-Manual cookies are secrets. Keep `~/.codexbar/config.json` private, leave its permissions at `0600`, never commit it,
+Manual cookies are secrets. Keep the CodexBar config file private, leave its permissions at `0600`, never commit it,
 and never paste real cookie values or readable DevTools screenshots into public issues.
 
 ### tokenAccounts
@@ -150,9 +178,11 @@ and never paste real cookie values or readable DevTools screenshots into public 
 }
 ```
 
+z.ai team accounts also use `usageScope`, `organizationId`, and `workspaceID`; see [z.ai](zai.md).
+
 ## Provider IDs
 Current IDs (see `Sources/CodexBarCore/Providers/Providers.swift`):
-`codex`, `openai`, `azureopenai`, `claude`, `cursor`, `opencode`, `opencodego`, `alibaba`, `factory`, `gemini`, `antigravity`, `copilot`, `zai`, `minimax`, `manus`, `kimi`, `kilo`, `kiro`, `vertexai`, `augment`, `jetbrains`, `kimik2`, `moonshot`, `amp`, `ollama`, `synthetic`, `warp`, `openrouter`, `elevenlabs`, `windsurf`, `perplexity`, `mimo`, `doubao`, `abacus`, `mistral`, `deepseek`, `codebuff`, `crof`, `venice`, `commandcode`, `stepfun`, `bedrock`, `grok`, `groq`, `llmproxy`, `deepgram`.
+`codex`, `openai`, `azureopenai`, `claude`, `cursor`, `opencode`, `opencodego`, `alibaba`, `alibabatokenplan`, `factory`, `gemini`, `antigravity`, `copilot`, `devin`, `zai`, `minimax`, `manus`, `kimi`, `kilo`, `kiro`, `vertexai`, `augment`, `jetbrains`, `kimik2`, `moonshot`, `amp`, `t3chat`, `ollama`, `synthetic`, `warp`, `openrouter`, `elevenlabs`, `windsurf`, `zed`, `perplexity`, `mimo`, `doubao`, `sakana`, `abacus`, `mistral`, `deepseek`, `codebuff`, `crof`, `venice`, `commandcode`, `qoder`, `stepfun`, `bedrock`, `grok`, `groq`, `llmproxy`, `litellm`, `deepgram`, `poe`, `chutes`, `crossmodel`, `clawrouter`.
 
 ## Ordering
 The order of `providers` controls display/order in the app and CLI. Reorder the array to change ordering.
